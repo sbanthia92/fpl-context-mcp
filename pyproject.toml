@@ -28,6 +28,12 @@ dev = [
 [project.scripts]
 sports-context-mcp = "server:main"
 
+[project.urls]
+Homepage = "https://github.com/sbanthia92/sports-context-mcp"
+Repository = "https://github.com/sbanthia92/sports-context-mcp"
+"Bug Tracker" = "https://github.com/sbanthia92/sports-context-mcp/issues"
+Changelog = "https://github.com/sbanthia92/sports-context-mcp/blob/main/CHANGELOG.md"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["tools*", "jobs*"]
