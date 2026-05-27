@@ -25,8 +25,8 @@ dev = [
     "ruff>=0.4.0",
 ]
 
-# Run the MCP server: cd sports-context-mcp && python server.py
-# (stdio transport — register in claude_desktop_config.json or via mcp install)
+[project.scripts]
+sports-context-mcp = "server:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
