@@ -6,16 +6,22 @@ Exposes two tools over the MCP stdio transport:
   query_historical_stats   — read-only SQL against the Gaffer PostgreSQL database
   query_press_conferences  — semantic search over the Pinecone 'press' namespace
 
-Run locally:
-    cd sports-context-mcp
-    python server.py
+Install and run:
+    pip install sports-context-mcp
+    sports-context-mcp
+
+Verify connectivity before registering with a client:
+    sports-context-mcp --check
 
 Register in Claude Desktop (claude_desktop_config.json):
     {
       "mcpServers": {
         "sports-context": {
-          "command": "python",
-          "args": ["/absolute/path/to/sports-context-mcp/server.py"]
+          "command": "sports-context-mcp",
+          "env": {
+            "DATABASE_URL": "postgresql://...",
+            "PINECONE_API_KEY": "pcsk_..."
+          }
         }
       }
     }
