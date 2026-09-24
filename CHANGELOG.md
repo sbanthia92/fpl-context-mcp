@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-24
+
+### Added
+
+- **PyPI packaging metadata** — `pyproject.toml` now declares `authors`,
+  `license` (MIT), `readme`, `classifiers`, and `[project.urls]` so the
+  package renders correctly on PyPI.
+- **`[project.scripts]` entry points** — `sports-context-mcp` (the MCP
+  server, `server:main`), `sports-context-ingest-press`
+  (`jobs.ingest_press_content:run`), and `sports-context-ingest-match`
+  (`jobs.ingest_match_data:run`) are now installed as real CLI commands, so
+  a `pip install` alone is enough to run and cron-schedule the ingestion
+  jobs without cloning the repo.
+- **`LICENSE`** — MIT license.
+- **`.env.example`** — template for local `.env` setup, listing all
+  supported variables with placeholder values.
+- **`db/schema.sql`** — reference PostgreSQL schema (tables + example
+  read-only/ETL role grants) for anyone provisioning a database for this
+  server outside of The Gaffer.
+- **`.github/workflows/publish.yml`** — builds sdist/wheel and publishes to
+  PyPI via Trusted Publishing (OIDC) on `v*.*.*` tag push.
+- **README overhaul** — added a linear Quickstart, a "Provisioning your own
+  database" section, a "Seeding data (required before first use)" section,
+  and a "Keeping data fresh (ongoing)" section covering cron cadence and
+  scheduling options. Data staleness/emptiness was previously undocumented
+  as an ongoing operational requirement.
+
+### Fixed
+
+- **`mcp` dependency pinned to `<2.0.0`** — `server.py` uses the mcp 1.x
+  low-level `Server` decorator API (`@server.list_tools()` etc.), which
+  mcp 2.x removed. The previous unbounded `mcp>=1.0.0` constraint meant a
+  fresh install today would pull mcp 2.2.0 and crash immediately on
+  startup.
+- **`query_press_conferences` no longer returns a silent empty string**
+  when the Pinecone namespace has no matches — it now returns a message
+  explaining the namespace may be unseeded or fully aged-out, so this
+  doesn't look like a working-but-answerless tool.
+
 ## [0.2.0] — 2026-05-11
 
 ### Removed

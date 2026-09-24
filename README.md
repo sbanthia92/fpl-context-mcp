@@ -7,29 +7,48 @@ An [MCP](https://modelcontextprotocol.io) server that gives Claude (or any MCP c
 | `query_historical_stats` | Runs a read-only SQL SELECT against a PostgreSQL database with 3+ seasons of PL stats |
 | `query_press_conferences` | Semantic search over BBC Sport and The Guardian press-conference summaries and injury updates stored in Pinecone |
 
-Both ingestion jobs that keep the data fresh are included:
+Two ingestion jobs keep that data populated and current:
 
 | Job | What it does |
 |---|---|
 | `ingest_press_content` | Fetches articles from BBC Sport RSS and The Guardian API, embeds them, and upserts into Pinecone |
 | `ingest_match_data` | Fetches fixture and player-stat data from the FPL API, and delta-writes to PostgreSQL |
 
+> **This server does not fetch live data per-question.** The two tools above only read whatever is already sitting in *your* PostgreSQL database and Pinecone index. Those stores start out **empty** — you must run the ingestion jobs once to seed them, and then keep running them **on a recurring schedule forever**, or answers will silently go stale (press results) or stay empty (stats results). This is not a one-time setup step. See [Keeping data fresh (ongoing)](#keeping-data-fresh-ongoing) — it's the single most important thing to get right before handing this to anyone.
+
 ---
 
 ## Contents
 
+- [Quickstart](#quickstart)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Provisioning your own database (standalone only)](#provisioning-your-own-database-standalone-only)
+- [Seeding data (required before first use)](#seeding-data-required-before-first-use)
+- [Keeping data fresh (ongoing)](#keeping-data-fresh-ongoing)
 - [Registering with Claude Desktop](#registering-with-claude-desktop)
 - [Running the server standalone](#running-the-server-standalone)
 - [Verifying connectivity (--check)](#verifying-connectivity---check)
 - [Dry-run mode](#dry-run-mode)
 - [MCP tools reference](#mcp-tools-reference)
-- [Running ingestion jobs](#running-ingestion-jobs)
 - [Database schema](#database-schema)
 - [Running tests](#running-tests)
 - [Extending with new press sources](#extending-with-new-press-sources)
+
+---
+
+## Quickstart
+
+The full path from zero to a working MCP tool, in order. Each step links to details further down.
+
+1. **Install**: `pip install sports-context-mcp` — see [Installation](#installation).
+2. **Provision storage**: a PostgreSQL database and a Pinecone index. If you're not reusing [The Gaffer](https://github.com/sbanthia92/Gaffer)'s existing storage, run [`db/schema.sql`](db/schema.sql) against a fresh Postgres database and create a Pinecone index named `the-gaffer` (or your own name) using the `multilingual-e5-large` model — see [Provisioning your own database](#provisioning-your-own-database-standalone-only).
+3. **Configure**: copy [`.env.example`](.env.example) to `.env` and fill in your `DATABASE_URL`, `DATABASE_ETL_URL`, and `PINECONE_API_KEY` — see [Configuration](#configuration).
+4. **Verify connectivity**: `sports-context-mcp --check` — confirms every credential works before you go further.
+5. **Seed data**: run both ingestion commands once so there's actually something to query — see [Seeding data](#seeding-data-required-before-first-use).
+6. **Schedule ongoing ingestion**: set up cron (or equivalent) to keep re-running those same two commands indefinitely — see [Keeping data fresh](#keeping-data-fresh-ongoing). Skipping this is the #1 cause of "the tool returns nothing" reports.
+7. **Register with Claude Desktop**: add the server to `claude_desktop_config.json` and restart Claude — see [Registering with Claude Desktop](#registering-with-claude-desktop).
 
 ---
 
@@ -38,10 +57,10 @@ Both ingestion jobs that keep the data fresh are included:
 | Requirement | Version |
 |---|---|
 | Python | 3.11+ |
-| PostgreSQL | Any recent version with a `gaffer_readonly` role |
-| Pinecone | Index named `the-gaffer` using the `multilingual-e5-large` model (1024 dims) |
+| PostgreSQL | Any recent version, with a read-only role (e.g. `gaffer_readonly`) and a read/write role (e.g. `gaffer_etl`) |
+| Pinecone | An index using the `multilingual-e5-large` model (1024 dims) — free tier works |
 
-The PostgreSQL database and Pinecone index are part of [The Gaffer](https://github.com/sbanthia92/Gaffer). If you're running this server standalone (without The Gaffer), you'll need to provision those resources yourself — see [Configuration](#configuration) for the expected schema.
+You can point this server at [The Gaffer](https://github.com/sbanthia92/Gaffer)'s existing PostgreSQL database and Pinecone index if you already run that app, or provision your own — see the next two sections either way.
 
 ---
 
@@ -52,6 +71,8 @@ The PostgreSQL database and Pinecone index are part of [The Gaffer](https://gith
 ```bash
 pip install sports-context-mcp
 ```
+
+This installs three CLI commands: `sports-context-mcp` (the MCP server), `sports-context-ingest-press`, and `sports-context-ingest-match` (the two ingestion jobs — see [Seeding data](#seeding-data-required-before-first-use)).
 
 ### With uv
 
@@ -79,7 +100,7 @@ sports-context-mcp @ git+https://github.com/sbanthia92/sports-context-mcp.git
 
 ## Configuration
 
-The server reads all secrets from environment variables. Create a `.env` file in the repo root (it is gitignored):
+The server reads all secrets from environment variables. Copy [`.env.example`](.env.example) to `.env` in your working directory (it's gitignored) and fill in your own values:
 
 ```dotenv
 # PostgreSQL — read-only connection for the query_historical_stats tool
@@ -107,6 +128,91 @@ GUARDIAN_API_KEY=your-key-here
 | `query_press_conferences` tool | `PINECONE_API_KEY` |
 | `ingest_press_content` job | `PINECONE_API_KEY`, `GUARDIAN_API_KEY` |
 | `ingest_match_data` job | `DATABASE_ETL_URL` (or `DATABASE_URL`) |
+
+Run `sports-context-mcp --check` any time to confirm all of the above are set correctly and reachable — see [Verifying connectivity](#verifying-connectivity---check).
+
+---
+
+## Provisioning your own database (standalone only)
+
+Skip this section if you're pointing at an existing [The Gaffer](https://github.com/sbanthia92/Gaffer) database and Pinecone index — they're already set up.
+
+**PostgreSQL:**
+
+```bash
+createdb gaffer   # or whatever database name you'll use in DATABASE_URL
+psql gaffer -f db/schema.sql
+```
+
+[`db/schema.sql`](db/schema.sql) creates the six tables `query_historical_stats` expects (`seasons`, `teams`, `gameweeks`, `players`, `fixtures`, `gw_player_stats`, plus the `player_xpts` materialized view) and includes example `CREATE ROLE` statements for the read-only and read/write roles referenced in `.env.example`. It's a starting schema, not a full migration tool — adjust types/constraints as needed.
+
+**Pinecone:**
+
+1. Create a free account at [pinecone.io](https://www.pinecone.io/) if you don't have one.
+2. Create an index named `the-gaffer` (or any name — just set `PINECONE_INDEX_NAME` to match) configured for the `multilingual-e5-large` **integrated embedding model** (1024 dimensions, cosine metric). No separate embedding step needed — the ingestion job and the query tool both call Pinecone's built-in inference.
+3. Grab an API key from the Pinecone console and set `PINECONE_API_KEY`.
+
+Both tables and the index start **completely empty**. Continue to [Seeding data](#seeding-data-required-before-first-use).
+
+---
+
+## Seeding data (required before first use)
+
+Both ingestion jobs are plain functions you run directly — nothing runs automatically on `pip install` or on MCP server startup.
+
+```bash
+# If installed from PyPI
+sports-context-ingest-press
+sports-context-ingest-match
+
+# If running from source
+python -m jobs.ingest_press_content
+python -m jobs.ingest_match_data
+```
+
+Run both **once, right after configuring your `.env`**, before registering the server with Claude Desktop. Until you do:
+
+- `query_press_conferences` will return a message telling you the namespace is unseeded, instead of any article content.
+- `query_historical_stats` will return `Query returned no results.` for any query, since the tables are empty.
+
+`ingest_match_data` populates 3+ seasons of history on first run (it writes everything, since there's no prior `MAX(kickoff_time)` to delta against). `ingest_press_content` only pulls currently-live articles (BBC/Guardian don't offer deep history), so the press index will be thin until it's had a few days of scheduled runs — that's expected, not a bug.
+
+---
+
+## Keeping data fresh (ongoing)
+
+**This is not a one-time step.** Fixtures change weekly, player stats update after every match, and press articles are deleted from the index after 14 days (`ingest_press_content` prunes stale docs on every run). If you seed once and never run these jobs again, a query a month later will hit a Pinecone namespace with **zero documents** (everything aged out) and a Postgres database that's **missing every fixture since your last run**.
+
+You need something to invoke `sports-context-ingest-press` and `sports-context-ingest-match` on a recurring schedule, indefinitely, for as long as the MCP server is in use. Pick whichever fits your setup:
+
+### Option A — cron (simplest, any Linux/macOS host)
+
+```cron
+# Press content: nightly at midnight UTC
+0 0 * * * /path/to/venv/bin/sports-context-ingest-press >> /var/log/sports-context-ingest-press.log 2>&1
+
+# Match data: twice daily during the season (06:00 + 22:00 UTC)
+0 6,22 * * * /path/to/venv/bin/sports-context-ingest-match >> /var/log/sports-context-ingest-match.log 2>&1
+```
+
+Adjust the match-data cadence to the calendar:
+
+| Period | Recommended cadence |
+|---|---|
+| PL season (Aug–May) | Twice daily, `0 6,22 * * *` |
+| World Cup / tournament group stage | Hourly, `0 * * * *` |
+| World Cup / tournament knockout | Every 6 hours, `0 */6 * * *` |
+| Off-season | Once daily, `0 8 * * *` |
+
+### Option B — fork this repo and use its GitHub Actions workflows
+
+[`.github/workflows/ingest_press_content.yml`](.github/workflows/ingest_press_content.yml) and [`.github/workflows/ingest_match_data.yml`](.github/workflows/ingest_match_data.yml) already implement the schedules above. **Note:** these only run inside *this* repository's own GitHub Actions, using secrets configured on `sbanthia92/sports-context-mcp` — installing the package from PyPI does **not** give you these automatically. To use them yourself: fork the repo, add `PINECONE_API_KEY`, `PINECONE_INDEX_NAME`, `GUARDIAN_API_KEY`, `DATABASE_URL`, and `DATABASE_ETL_URL` as repo secrets ([Settings → Secrets and variables → Actions](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions)), and the workflows run on your fork's own schedule.
+
+### Option C — any other scheduler
+
+Managed cron (Render, Railway, Fly.io machines, GCP Cloud Scheduler + Cloud Run Jobs, AWS EventBridge + Lambda/Fargate, systemd timers, Airflow, Dagster, etc.) all work the same way — point it at `sports-context-ingest-press` and `sports-context-ingest-match` (or the `python -m jobs.*` equivalents) with the cadence table above and the environment variables from [Configuration](#configuration).
+
+Whichever option you pick, re-run `sports-context-mcp --check` afterward to confirm the scheduled job's credentials actually work in that environment — a job that silently fails every night is worse than no job, since nothing tells you the data's gone stale.
 
 ---
 
@@ -153,7 +259,7 @@ Add the server to `~/Library/Application Support/Claude/claude_desktop_config.js
 > "args": ["run", "/absolute/path/to/sports-context-mcp/server.py"]
 > ```
 
-Restart Claude Desktop. You should see `sports-context` appear in the tools panel.
+Restart Claude Desktop. You should see `sports-context` appear in the tools panel. If either tool returns nothing useful, re-check [Seeding data](#seeding-data-required-before-first-use) and [Keeping data fresh](#keeping-data-fresh-ongoing) before assuming the server itself is broken.
 
 ---
 
@@ -173,7 +279,7 @@ The server communicates over stdio — it is designed to be launched by an MCP c
 
 ## Verifying connectivity (--check)
 
-Before registering the server with a client, verify that your environment variables are correct and all backends are reachable:
+Before registering the server with a client — and any time something seems off — verify that your environment variables are correct and all backends are reachable:
 
 ```bash
 # If installed from PyPI
@@ -196,7 +302,7 @@ Output example:
 ✅ All required components OK
 ```
 
-The command exits with code `0` if all required components pass, or `1` if any required component fails. Optional components (Guardian API) emit warnings but do not cause a non-zero exit.
+The command exits with code `0` if all required components pass, or `1` if any required component fails. Optional components (Guardian API) emit warnings but do not cause a non-zero exit. Note that `--check` only verifies *connectivity* — it doesn't tell you whether your tables/index actually have data in them; for that, see [Seeding data](#seeding-data-required-before-first-use).
 
 ---
 
@@ -206,10 +312,7 @@ Set `DRY_RUN=true` to fetch data and verify routing without writing anything to 
 
 ```bash
 DRY_RUN=true sports-context-mcp
-```
-
-```bash
-DRY_RUN=true python -c "from jobs.ingest_press_content import run; run()"
+DRY_RUN=true sports-context-ingest-press
 ```
 
 In dry-run mode:
@@ -274,39 +377,13 @@ final_score = semantic_score × (1 + recency_weight × recency_score)
 - *"What did Slot say about Salah's contract situation?"*
 - *"Who is doubtful for Arsenal's next match?"*
 
----
-
-## Running ingestion jobs
-
-Ingestion jobs are plain Python scripts — run them directly or schedule them via cron.
-
-### Press content (Pinecone)
-
-Fetches articles from BBC Sport RSS and The Guardian content API, embeds them with `multilingual-e5-large`, and upserts into the `press` Pinecone namespace. Stale articles (>14 days) are deleted on each run.
-
-```bash
-python -c "from jobs.ingest_press_content import run; run()"
-```
-
-Run twice daily for fresh injury and team news. Both fetchers run concurrently; if one source fails the other's articles are still upserted.
-
-**Guardian API key note:** With the default `test` key, `bodyText` is not populated — the fetcher falls back to `trailText` (the article summary). For full article text, register for a free key at [open-platform.theguardian.com](https://open-platform.theguardian.com/access/).
-
-### Match data (PostgreSQL)
-
-Fetches fixture and player-stat data from the FPL bootstrap API, then delta-writes to PostgreSQL — only rows with a `kickoff_time` newer than the latest stored fixture are inserted.
-
-```bash
-python -c "from jobs.ingest_match_data import run; run()"
-```
-
-Runs the FPL fetch in a worker thread, waits for it to complete, then writes in a single transaction. If the fetch fails, the delta write is skipped.
+**No results?** If the `press` namespace hasn't been seeded yet, or everything in it has aged out past 14 days, this tool returns a message explaining that instead of an empty response — see [Keeping data fresh](#keeping-data-fresh-ongoing).
 
 ---
 
 ## Database schema
 
-The `query_historical_stats` tool has access to these tables:
+The `query_historical_stats` tool has access to these tables (see [`db/schema.sql`](db/schema.sql) for the full DDL if provisioning standalone):
 
 ```
 seasons          id, label (e.g. '2025/26'), start_year, is_current
@@ -345,7 +422,7 @@ player_xpts      materialized view: player_fpl_id, web_name, team_name,
 # Install dev dependencies if you haven't already
 pip install -e ".[dev]"
 
-# Run the full suite (81 tests, all mocked — no real DB or API calls)
+# Run the full suite (all mocked — no real DB or API calls)
 pytest tests/ -v
 
 # Lint and format

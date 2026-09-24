@@ -79,14 +79,15 @@ async def test_recency_reranking_promotes_fresher_doc(mock_pinecone):
 
 
 @pytest.mark.asyncio
-async def test_returns_empty_string_on_no_matches(mock_pinecone):
-    """Returns empty string when Pinecone finds no matching documents."""
+async def test_returns_helpful_message_on_no_matches(mock_pinecone):
+    """Returns a guidance message (not a silent empty string) when the namespace is unseeded."""
     _, index = mock_pinecone
     index.query.return_value.matches = []
 
     result = await query_press_conferences("completely unknown topic")
 
-    assert result == ""
+    assert result != ""
+    assert "ingest_press_content" in result
 
 
 @pytest.mark.asyncio
