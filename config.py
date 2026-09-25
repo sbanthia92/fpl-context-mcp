@@ -1,5 +1,5 @@
 """
-Configuration for sports-context-mcp.
+Configuration for fpl-context-mcp.
 
 Reads from environment variables. Intentionally uses the same variable names as
 the Gaffer server so a single .env file at the repo root covers both packages.
@@ -17,7 +17,7 @@ try:
     from dotenv import load_dotenv
 
     # Walk up to find the nearest .env — works whether running from within
-    # sports-context-mcp/ or from the Gaffer repo root.
+    # fpl-context-mcp/ or from the Gaffer repo root.
     _here = Path(__file__).resolve().parent
     for _candidate in [_here / ".env", _here.parent / ".env"]:
         if _candidate.exists():

@@ -28,7 +28,7 @@ jobs:
           cache: pip
 
       - name: Install package and dependencies
-        # Install sports-context-mcp as an editable package so all relative
+        # Install fpl-context-mcp as an editable package so all relative
         # imports resolve correctly when running jobs as modules.
         run: pip install -e ".[dev]"
 

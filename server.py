@@ -1,5 +1,5 @@
 """
-sports-context-mcp — MCP server entry point.
+fpl-context-mcp — MCP server entry point.
 
 Exposes two tools over the MCP stdio transport:
 
@@ -7,15 +7,15 @@ Exposes two tools over the MCP stdio transport:
   query_press_conferences  — semantic search over the Pinecone 'press' namespace
 
 Run locally:
-    cd sports-context-mcp
+    cd fpl-context-mcp
     python server.py
 
 Register in Claude Desktop (claude_desktop_config.json):
     {
       "mcpServers": {
-        "sports-context": {
+        "fpl-context": {
           "command": "python",
-          "args": ["/absolute/path/to/sports-context-mcp/server.py"]
+          "args": ["/absolute/path/to/fpl-context-mcp/server.py"]
         }
       }
     }
@@ -53,7 +53,7 @@ def check_config() -> None:
     import asyncio
 
     ok = True
-    lines = ["\n=== sports-context-mcp configuration check ===\n"]
+    lines = ["\n=== fpl-context-mcp configuration check ===\n"]
 
     # --- Pinecone ---
     if not cfg.pinecone_api_key:
@@ -122,7 +122,7 @@ def check_config() -> None:
     sys.exit(0 if ok else 1)
 
 
-server = Server("sports-context-mcp")
+server = Server("fpl-context-mcp")
 
 
 @server.list_tools()
@@ -245,7 +245,7 @@ async def _serve() -> None:
             "Set DRY_RUN=false to disable."
         )
     async with stdio_server() as (read_stream, write_stream):
-        log.info("sports-context-mcp server started (stdio transport)")
+        log.info("fpl-context-mcp server started (stdio transport)")
         await server.run(
             read_stream,
             write_stream,

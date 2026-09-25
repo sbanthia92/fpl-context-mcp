@@ -1,4 +1,4 @@
-# sports-context-mcp
+# fpl-context-mcp
 
 Standalone MCP server that exposes Premier League sports stats and press-conference
 RAG as MCP tools, plus threaded ingestion jobs that keep the underlying PostgreSQL
@@ -17,7 +17,7 @@ extracted from the Gaffer monorepo it becomes a fully independent service.
 
 ## Package structure
 ```
-sports-context-mcp/
+fpl-context-mcp/
   config.py                        # Env-var config (same var names as the Gaffer)
   server.py                        # MCP server entry point (stdio transport)
   tools/
@@ -45,15 +45,15 @@ sports-context-mcp/
     publish.yml                    # Build + publish to PyPI via Trusted Publishing on v*.*.* tags
 ```
 
-Installed CLI entry points (`[project.scripts]` in `pyproject.toml`): `sports-context-mcp`
-(the server), `sports-context-ingest-press`, `sports-context-ingest-match` (the two jobs —
+Installed CLI entry points (`[project.scripts]` in `pyproject.toml`): `fpl-context-mcp`
+(the server), `fpl-context-ingest-press`, `fpl-context-ingest-match` (the two jobs —
 callable directly after `pip install`, no repo clone needed).
 
 **Data ownership model**: this package is bring-your-own-backend. Every install talks to
 whatever `DATABASE_URL`/`PINECONE_API_KEY` the operator configures — their own storage,
 empty until they run the ingestion jobs themselves (README: "Seeding data" / "Keeping data
 fresh"). The `.github/workflows/ingest_*.yml` files in this repo only run against secrets
-configured on `sbanthia92/sports-context-mcp` and feed the maintainer's own database — they
+configured on `sbanthia92/fpl-context-mcp` and feed the maintainer's own database — they
 do not update data on behalf of anyone who installs the package from PyPI.
 
 ## Dev commands
@@ -97,9 +97,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "sports-context": {
+    "fpl-context": {
       "command": "python",
-      "args": ["/absolute/path/to/sports-context-mcp/server.py"]
+      "args": ["/absolute/path/to/fpl-context-mcp/server.py"]
     }
   }
 }

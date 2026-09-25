@@ -17,7 +17,7 @@ result is treated as None and the delta write is skipped.
 PostgreSQL schema (read from db.py docstring and etl_v2.py):
   seasons, teams, gameweeks, players, fixtures, gw_player_stats
 
-Run from the sports-context-mcp directory:
+Run from the fpl-context-mcp directory:
     python -m jobs.ingest_match_data
 
 Cron: see .github/workflows/ingest_match_data.yml for schedule.
@@ -71,7 +71,7 @@ def _fpl_get(path: str, timeout: int = 30) -> dict:
     resp = requests.get(
         f"{_FPL_BASE}{path}",
         timeout=timeout,
-        headers={"User-Agent": "sports-context-mcp/0.1"},
+        headers={"User-Agent": "fpl-context-mcp/0.1"},
     )
     resp.raise_for_status()
     return resp.json()

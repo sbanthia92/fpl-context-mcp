@@ -1,4 +1,4 @@
--- Reference schema for standalone deployments of sports-context-mcp.
+-- Reference schema for standalone deployments of fpl-context-mcp.
 --
 -- If you're running this server against The Gaffer's existing database, you
 -- don't need this file — the tables already exist there. This is only for

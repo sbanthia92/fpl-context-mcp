@@ -1,6 +1,6 @@
-# sports-context-mcp
+# fpl-context-mcp
 
-An [MCP](https://modelcontextprotocol.io) server that gives Claude (or any MCP client) two tools for answering Premier League football questions:
+An [MCP](https://modelcontextprotocol.io) server that gives Claude (or any MCP client) two tools for answering Fantasy Premier League (FPL) and Premier League football questions:
 
 | Tool | What it does |
 |---|---|
@@ -42,10 +42,10 @@ Two ingestion jobs keep that data populated and current:
 
 The full path from zero to a working MCP tool, in order. Each step links to details further down.
 
-1. **Install**: `pip install sports-context-mcp` — see [Installation](#installation).
+1. **Install**: `pip install fpl-context-mcp` — see [Installation](#installation).
 2. **Provision storage**: a PostgreSQL database and a Pinecone index. If you're not reusing [The Gaffer](https://github.com/sbanthia92/Gaffer)'s existing storage, run [`db/schema.sql`](db/schema.sql) against a fresh Postgres database and create a Pinecone index named `the-gaffer` (or your own name) using the `multilingual-e5-large` model — see [Provisioning your own database](#provisioning-your-own-database-standalone-only).
 3. **Configure**: copy [`.env.example`](.env.example) to `.env` and fill in your `DATABASE_URL`, `DATABASE_ETL_URL`, and `PINECONE_API_KEY` — see [Configuration](#configuration).
-4. **Verify connectivity**: `sports-context-mcp --check` — confirms every credential works before you go further.
+4. **Verify connectivity**: `fpl-context-mcp --check` — confirms every credential works before you go further.
 5. **Seed data**: run both ingestion commands once so there's actually something to query — see [Seeding data](#seeding-data-required-before-first-use).
 6. **Schedule ongoing ingestion**: set up cron (or equivalent) to keep re-running those same two commands indefinitely — see [Keeping data fresh](#keeping-data-fresh-ongoing). Skipping this is the #1 cause of "the tool returns nothing" reports.
 7. **Register with Claude Desktop**: add the server to `claude_desktop_config.json` and restart Claude — see [Registering with Claude Desktop](#registering-with-claude-desktop).
@@ -69,31 +69,31 @@ You can point this server at [The Gaffer](https://github.com/sbanthia92/Gaffer)'
 ### From PyPI (recommended)
 
 ```bash
-pip install sports-context-mcp
+pip install fpl-context-mcp
 ```
 
-This installs three CLI commands: `sports-context-mcp` (the MCP server), `sports-context-ingest-press`, and `sports-context-ingest-match` (the two ingestion jobs — see [Seeding data](#seeding-data-required-before-first-use)).
+This installs three CLI commands: `fpl-context-mcp` (the MCP server), `fpl-context-ingest-press`, and `fpl-context-ingest-match` (the two ingestion jobs — see [Seeding data](#seeding-data-required-before-first-use)).
 
 ### With uv
 
 ```bash
-git clone https://github.com/sbanthia92/sports-context-mcp
-cd sports-context-mcp
+git clone https://github.com/sbanthia92/fpl-context-mcp
+cd fpl-context-mcp
 uv sync
 ```
 
 ### With pip (from source)
 
 ```bash
-git clone https://github.com/sbanthia92/sports-context-mcp
-cd sports-context-mcp
+git clone https://github.com/sbanthia92/fpl-context-mcp
+cd fpl-context-mcp
 pip install -e ".[dev]"
 ```
 
 ### As a dependency of another project
 
 ```
-sports-context-mcp @ git+https://github.com/sbanthia92/sports-context-mcp.git
+fpl-context-mcp @ git+https://github.com/sbanthia92/fpl-context-mcp.git
 ```
 
 ---
@@ -130,7 +130,7 @@ GUARDIAN_API_KEY=your-key-here
 | `ingest_press_content` job | `PINECONE_API_KEY` (plus `GUARDIAN_API_KEY` for Guardian articles) |
 | `ingest_match_data` job | `DATABASE_ETL_URL` (or `DATABASE_URL`) |
 
-Run `sports-context-mcp --check` any time to confirm all of the above are set correctly and reachable — see [Verifying connectivity](#verifying-connectivity---check).
+Run `fpl-context-mcp --check` any time to confirm all of the above are set correctly and reachable — see [Verifying connectivity](#verifying-connectivity---check).
 
 ---
 
@@ -163,8 +163,8 @@ Both ingestion jobs are plain functions you run directly — nothing runs automa
 
 ```bash
 # If installed from PyPI
-sports-context-ingest-press
-sports-context-ingest-match
+fpl-context-ingest-press
+fpl-context-ingest-match
 
 # If running from source
 python -m jobs.ingest_press_content
@@ -184,16 +184,16 @@ Run both **once, right after configuring your `.env`**, before registering the s
 
 **This is not a one-time step.** Fixtures change weekly, player stats update after every match, press articles are deleted from the index after 14 days, and injury/availability news is rewritten on every run so it reflects what FPL currently says (`ingest_press_content` prunes stale docs each time). If you seed once and never run these jobs again, a query a month later will hit a Pinecone namespace with **zero documents** (everything aged out) and a Postgres database that's **missing every fixture since your last run**.
 
-You need something to invoke `sports-context-ingest-press` and `sports-context-ingest-match` on a recurring schedule, indefinitely, for as long as the MCP server is in use. Pick whichever fits your setup:
+You need something to invoke `fpl-context-ingest-press` and `fpl-context-ingest-match` on a recurring schedule, indefinitely, for as long as the MCP server is in use. Pick whichever fits your setup:
 
 ### Option A — cron (simplest, any Linux/macOS host)
 
 ```cron
 # Press content: nightly at midnight UTC
-0 0 * * * /path/to/venv/bin/sports-context-ingest-press >> /var/log/sports-context-ingest-press.log 2>&1
+0 0 * * * /path/to/venv/bin/fpl-context-ingest-press >> /var/log/fpl-context-ingest-press.log 2>&1
 
 # Match data: twice daily during the season (06:00 + 22:00 UTC)
-0 6,22 * * * /path/to/venv/bin/sports-context-ingest-match >> /var/log/sports-context-ingest-match.log 2>&1
+0 6,22 * * * /path/to/venv/bin/fpl-context-ingest-match >> /var/log/fpl-context-ingest-match.log 2>&1
 ```
 
 Adjust the match-data cadence to the calendar:
@@ -227,15 +227,15 @@ Best if you don't have a machine that's always on. You don't fork this project �
          - uses: actions/setup-python@v5
            with:
              python-version: "3.11"
-         - run: pip install sports-context-mcp
+         - run: pip install fpl-context-mcp
          - name: Ingest press content
-           run: sports-context-ingest-press
+           run: fpl-context-ingest-press
            env:
              PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
              PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
              GUARDIAN_API_KEY: ${{ secrets.GUARDIAN_API_KEY }}
          - name: Ingest match data
-           run: sports-context-ingest-match
+           run: fpl-context-ingest-match
            env:
              DATABASE_URL: ${{ secrets.DATABASE_URL }}
              DATABASE_ETL_URL: ${{ secrets.DATABASE_ETL_URL }}
@@ -247,15 +247,15 @@ Best if you don't have a machine that's always on. You don't fork this project �
 Notes:
 
 - **A failed run turns red** and GitHub emails you (missing credentials, a database that's unreachable, an API outage), so you'll know if data stops flowing.
-- **Updates:** `pip install sports-context-mcp` grabs the latest release on every run, so fixes arrive automatically. Pin a version (`sports-context-mcp==0.3.0`) if you'd rather upgrade on purpose.
+- **Updates:** `pip install fpl-context-mcp` grabs the latest release on every run, so fixes arrive automatically. Pin a version (`fpl-context-mcp==0.3.0`) if you'd rather upgrade on purpose.
 - **Cost:** each run takes about a minute or two, so a twice-daily schedule stays well inside GitHub's free monthly minutes for private repos.
 - **Why private:** GitHub automatically pauses scheduled workflows in *public* repos after 60 days without a commit. Private repos aren't paused.
 
 ### Option C — any other scheduler
 
-Managed cron (Render, Railway, Fly.io machines, GCP Cloud Scheduler + Cloud Run Jobs, AWS EventBridge + Lambda/Fargate, systemd timers, Airflow, Dagster, etc.) all work the same way — point it at `sports-context-ingest-press` and `sports-context-ingest-match` (or the `python -m jobs.*` equivalents) with the cadence table above and the environment variables from [Configuration](#configuration).
+Managed cron (Render, Railway, Fly.io machines, GCP Cloud Scheduler + Cloud Run Jobs, AWS EventBridge + Lambda/Fargate, systemd timers, Airflow, Dagster, etc.) all work the same way — point it at `fpl-context-ingest-press` and `fpl-context-ingest-match` (or the `python -m jobs.*` equivalents) with the cadence table above and the environment variables from [Configuration](#configuration).
 
-Whichever option you pick, re-run `sports-context-mcp --check` afterward to confirm the scheduled job's credentials actually work in that environment — a job that silently fails every night is worse than no job, since nothing tells you the data's gone stale.
+Whichever option you pick, re-run `fpl-context-mcp --check` afterward to confirm the scheduled job's credentials actually work in that environment — a job that silently fails every night is worse than no job, since nothing tells you the data's gone stale.
 
 ---
 
@@ -268,8 +268,8 @@ Add the server to `~/Library/Application Support/Claude/claude_desktop_config.js
 ```json
 {
   "mcpServers": {
-    "sports-context": {
-      "command": "sports-context-mcp",
+    "fpl-context": {
+      "command": "fpl-context-mcp",
       "env": {
         "DATABASE_URL": "postgresql://gaffer_readonly:password@localhost:5432/gaffer",
         "PINECONE_API_KEY": "pcsk_..."
@@ -284,9 +284,9 @@ Add the server to `~/Library/Application Support/Claude/claude_desktop_config.js
 ```json
 {
   "mcpServers": {
-    "sports-context": {
+    "fpl-context": {
       "command": "python",
-      "args": ["/absolute/path/to/sports-context-mcp/server.py"],
+      "args": ["/absolute/path/to/fpl-context-mcp/server.py"],
       "env": {
         "DATABASE_URL": "postgresql://gaffer_readonly:password@localhost:5432/gaffer",
         "PINECONE_API_KEY": "pcsk_..."
@@ -299,10 +299,10 @@ Add the server to `~/Library/Application Support/Claude/claude_desktop_config.js
 > **Tip:** If you use `uv`, replace `"python"` with `"uv"` and prepend `"run"` to `args`:
 > ```json
 > "command": "uv",
-> "args": ["run", "/absolute/path/to/sports-context-mcp/server.py"]
+> "args": ["run", "/absolute/path/to/fpl-context-mcp/server.py"]
 > ```
 
-Restart Claude Desktop. You should see `sports-context` appear in the tools panel. If either tool returns nothing useful, re-check [Seeding data](#seeding-data-required-before-first-use) and [Keeping data fresh](#keeping-data-fresh-ongoing) before assuming the server itself is broken.
+Restart Claude Desktop. You should see `fpl-context` appear in the tools panel. If either tool returns nothing useful, re-check [Seeding data](#seeding-data-required-before-first-use) and [Keeping data fresh](#keeping-data-fresh-ongoing) before assuming the server itself is broken.
 
 ---
 
@@ -310,7 +310,7 @@ Restart Claude Desktop. You should see `sports-context` appear in the tools pane
 
 ```bash
 # If installed from PyPI
-sports-context-mcp
+fpl-context-mcp
 
 # If running from source
 python server.py
@@ -326,7 +326,7 @@ Before registering the server with a client — and any time something seems off
 
 ```bash
 # If installed from PyPI
-sports-context-mcp --check
+fpl-context-mcp --check
 
 # If running from source
 python server.py --check
@@ -335,7 +335,7 @@ python server.py --check
 Output example:
 
 ```
-=== sports-context-mcp configuration check ===
+=== fpl-context-mcp configuration check ===
 
 ✅ Pinecone          connected (index: 'the-gaffer')
 ✅ PostgreSQL (RO)   connected (localhost:5432/gaffer)
@@ -354,8 +354,8 @@ The command exits with code `0` if all required components pass, or `1` if any r
 Set `DRY_RUN=true` to fetch data and verify routing without writing anything to Pinecone or PostgreSQL:
 
 ```bash
-DRY_RUN=true sports-context-mcp
-DRY_RUN=true sports-context-ingest-press
+DRY_RUN=true fpl-context-mcp
+DRY_RUN=true fpl-context-ingest-press
 ```
 
 In dry-run mode:

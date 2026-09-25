@@ -1,7 +1,7 @@
 [project]
-name = "sports-context-mcp"
-version = "0.3.1"
-description = "Standalone MCP server exposing sports stats and press-conference RAG as MCP tools, with threaded ingestion jobs for PostgreSQL and Pinecone."
+name = "fpl-context-mcp"
+version = "0.4.0"
+description = "MCP server that gives Claude Fantasy Premier League stats and press/injury news search, with ingestion jobs that keep PostgreSQL and Pinecone up to date."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -43,17 +43,17 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sbanthia92/sports-context-mcp"
-Repository = "https://github.com/sbanthia92/sports-context-mcp"
-Changelog = "https://github.com/sbanthia92/sports-context-mcp/blob/main/CHANGELOG.md"
-Issues = "https://github.com/sbanthia92/sports-context-mcp/issues"
+Homepage = "https://github.com/sbanthia92/fpl-context-mcp"
+Repository = "https://github.com/sbanthia92/fpl-context-mcp"
+Changelog = "https://github.com/sbanthia92/fpl-context-mcp/blob/main/CHANGELOG.md"
+Issues = "https://github.com/sbanthia92/fpl-context-mcp/issues"
 
 [project.scripts]
-sports-context-mcp = "server:main"
-sports-context-ingest-press = "jobs.ingest_press_content:main"
-sports-context-ingest-match = "jobs.ingest_match_data:main"
+fpl-context-mcp = "server:main"
+fpl-context-ingest-press = "jobs.ingest_press_content:main"
+fpl-context-ingest-match = "jobs.ingest_match_data:main"
 
-# Run the MCP server: cd sports-context-mcp && python server.py
+# Run the MCP server: cd fpl-context-mcp && python server.py
 # (stdio transport — register in claude_desktop_config.json or via mcp install)
 
 [tool.setuptools.packages.find]
