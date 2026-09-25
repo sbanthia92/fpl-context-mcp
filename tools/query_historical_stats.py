@@ -1,13 +1,13 @@
 """
 MCP tool: query_historical_stats
 
-Executes a read-only SQL SELECT against the Gaffer PostgreSQL database, which
-holds Premier League stats for whichever seasons have been ingested (players, fixtures, teams,
-gameweeks, gw_player_stats).
+Executes a read-only SQL SELECT against the FPL PostgreSQL database, which holds
+Premier League stats for whichever seasons have been ingested (players, fixtures,
+teams, gameweeks, gw_player_stats).
 
-Safety guarantees mirror those in the Gaffer's server/tools/db.py:
+Safety guarantees:
   - Keyword blocklist rejects any mutation statement before it reaches the DB
-  - Connection uses the read-only DATABASE_URL (gaffer_readonly user)
+  - Connection uses the read-only DATABASE_URL (fpl_readonly user)
   - Statement timeout: 10 seconds
   - Result cap: 100 rows
 """
@@ -129,7 +129,7 @@ def _format_rows(rows: list[asyncpg.Record]) -> str:
 
 async def query_historical_stats(sql: str) -> str:
     """
-    Execute a read-only SQL SELECT against the Gaffer historical stats database.
+    Execute a read-only SQL SELECT against the FPL stats database.
 
     Validates the query, executes it against PostgreSQL with a 10-second timeout,
     and returns the results as a formatted plain-text table. Results are capped at

@@ -24,7 +24,7 @@ Two ingestion jobs keep that data populated and current:
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Configuration](#configuration)
-- [Provisioning your own database (standalone only)](#provisioning-your-own-database-standalone-only)
+- [Provisioning your database](#provisioning-your-database)
 - [Seeding data (required before first use)](#seeding-data-required-before-first-use)
 - [Keeping data fresh (ongoing)](#keeping-data-fresh-ongoing)
 - [Registering with Claude Desktop](#registering-with-claude-desktop)
@@ -43,7 +43,7 @@ Two ingestion jobs keep that data populated and current:
 The full path from zero to a working MCP tool, in order. Each step links to details further down.
 
 1. **Install**: `pip install fpl-context-mcp` — see [Installation](#installation).
-2. **Provision storage**: a PostgreSQL database and a Pinecone index. If you're not reusing [The Gaffer](https://github.com/sbanthia92/Gaffer)'s existing storage, run [`db/schema.sql`](db/schema.sql) against a fresh Postgres database and create a Pinecone index named `the-gaffer` (or your own name) using the `multilingual-e5-large` model — see [Provisioning your own database](#provisioning-your-own-database-standalone-only).
+2. **Provision storage**: a PostgreSQL database and a Pinecone index. Run [`db/schema.sql`](db/schema.sql) against a fresh Postgres database and create a Pinecone index named `fpl-context` (or your own name) using the `multilingual-e5-large` model — see [Provisioning your own database](#provisioning-your-database).
 3. **Configure**: copy [`.env.example`](.env.example) to `.env` and fill in your `DATABASE_URL`, `DATABASE_ETL_URL`, and `PINECONE_API_KEY` — see [Configuration](#configuration).
 4. **Verify connectivity**: `fpl-context-mcp --check` — confirms every credential works before you go further.
 5. **Seed data**: run the two ingestion commands, then the one-time history backfill, so there's actually something to query — see [Seeding data](#seeding-data-required-before-first-use).
@@ -57,10 +57,10 @@ The full path from zero to a working MCP tool, in order. Each step links to deta
 | Requirement | Version |
 |---|---|
 | Python | 3.11+ |
-| PostgreSQL | Any recent version, with a read-only role (e.g. `gaffer_readonly`) and a read/write role (e.g. `gaffer_etl`) |
+| PostgreSQL | Any recent version, with a read-only role (e.g. `fpl_readonly`) and a read/write role (e.g. `fpl_etl`) |
 | Pinecone | An index using the `multilingual-e5-large` model (1024 dims) — free tier works |
 
-You can point this server at [The Gaffer](https://github.com/sbanthia92/Gaffer)'s existing PostgreSQL database and Pinecone index if you already run that app, or provision your own — see the next two sections either way.
+You provision both yourself — see the next two sections. Both have free tiers that are enough for this.
 
 ---
 
@@ -104,15 +104,15 @@ The server reads all secrets from environment variables. Copy [`.env.example`](.
 
 ```dotenv
 # PostgreSQL — read-only connection for the query_historical_stats tool
-DATABASE_URL=postgresql://gaffer_readonly:password@localhost:5432/gaffer
+DATABASE_URL=postgresql://fpl_readonly:password@localhost:5432/fpl
 
 # PostgreSQL — read/write connection for the ingest_match_data job
 # Falls back to DATABASE_URL if not set
-DATABASE_ETL_URL=postgresql://gaffer_etl:password@localhost:5432/gaffer
+DATABASE_ETL_URL=postgresql://fpl_etl:password@localhost:5432/fpl
 
 # Pinecone — required for both the press tool and the ingest_press_content job
 PINECONE_API_KEY=pcsk_...
-PINECONE_INDEX_NAME=the-gaffer   # optional, defaults to 'the-gaffer'
+PINECONE_INDEX_NAME=fpl-context   # optional, defaults to 'fpl-context'
 
 # The Guardian open platform API key
 # Register free at https://open-platform.theguardian.com/access/
@@ -134,15 +134,13 @@ Run `fpl-context-mcp --check` any time to confirm all of the above are set corre
 
 ---
 
-## Provisioning your own database (standalone only)
-
-Skip this section if you're pointing at an existing [The Gaffer](https://github.com/sbanthia92/Gaffer) database and Pinecone index — they're already set up.
+## Provisioning your database
 
 **PostgreSQL:**
 
 ```bash
-createdb gaffer   # or whatever database name you'll use in DATABASE_URL
-psql gaffer -f db/schema.sql
+createdb fpl   # or whatever database name you'll use in DATABASE_URL
+psql fpl -f db/schema.sql
 ```
 
 [`db/schema.sql`](db/schema.sql) creates the six tables `query_historical_stats` expects (`seasons`, `teams`, `gameweeks`, `players`, `fixtures`, `gw_player_stats`) and includes example `CREATE ROLE` statements for the read-only and read/write roles referenced in `.env.example`. It's a starting schema, not a full migration tool — adjust types/constraints as needed.
@@ -150,7 +148,7 @@ psql gaffer -f db/schema.sql
 **Pinecone:**
 
 1. Create a free account at [pinecone.io](https://www.pinecone.io/) if you don't have one.
-2. Create an index named `the-gaffer` (or any name — just set `PINECONE_INDEX_NAME` to match) configured for the `multilingual-e5-large` **integrated embedding model** (1024 dimensions, cosine metric). No separate embedding step needed — the ingestion job and the query tool both call Pinecone's built-in inference.
+2. Create an index named `fpl-context` (or any name — just set `PINECONE_INDEX_NAME` to match) configured for the `multilingual-e5-large` **integrated embedding model** (1024 dimensions, cosine metric). No separate embedding step needed — the ingestion job and the query tool both call Pinecone's built-in inference.
 3. Grab an API key from the Pinecone console and set `PINECONE_API_KEY`.
 
 Both tables and the index start **completely empty**. Continue to [Seeding data](#seeding-data-required-before-first-use).
@@ -262,7 +260,7 @@ Best if you don't have a machine that's always on. You don't fork this project �
              DATABASE_ETL_URL: ${{ secrets.DATABASE_ETL_URL }}
    ```
 
-3. In that repo: **Settings → Secrets and variables → Actions → New repository secret**, and add `PINECONE_API_KEY`, `DATABASE_URL`, and `DATABASE_ETL_URL`. `GUARDIAN_API_KEY` is strongly recommended — without it the Guardian source is skipped and only BBC Sport articles are ingested (register a free key at [open-platform.theguardian.com](https://open-platform.theguardian.com/access/)). `PINECONE_INDEX_NAME` is optional and defaults to `the-gaffer`.
+3. In that repo: **Settings → Secrets and variables → Actions → New repository secret**, and add `PINECONE_API_KEY`, `DATABASE_URL`, and `DATABASE_ETL_URL`. `GUARDIAN_API_KEY` is strongly recommended — without it the Guardian source is skipped and only BBC Sport articles are ingested (register a free key at [open-platform.theguardian.com](https://open-platform.theguardian.com/access/)). `PINECONE_INDEX_NAME` is optional and defaults to `fpl-context`.
 4. Open the **Actions** tab, pick "Ingest sports data", and click **Run workflow** once to seed your data. From then on it runs by itself on the schedule.
 
 Notes:
@@ -292,7 +290,7 @@ Add the server to `~/Library/Application Support/Claude/claude_desktop_config.js
     "fpl-context": {
       "command": "fpl-context-mcp",
       "env": {
-        "DATABASE_URL": "postgresql://gaffer_readonly:password@localhost:5432/gaffer",
+        "DATABASE_URL": "postgresql://fpl_readonly:password@localhost:5432/fpl",
         "PINECONE_API_KEY": "pcsk_..."
       }
     }
@@ -309,7 +307,7 @@ Add the server to `~/Library/Application Support/Claude/claude_desktop_config.js
       "command": "python",
       "args": ["/absolute/path/to/fpl-context-mcp/server.py"],
       "env": {
-        "DATABASE_URL": "postgresql://gaffer_readonly:password@localhost:5432/gaffer",
+        "DATABASE_URL": "postgresql://fpl_readonly:password@localhost:5432/fpl",
         "PINECONE_API_KEY": "pcsk_..."
       }
     }
@@ -358,9 +356,9 @@ Output example:
 ```
 === fpl-context-mcp configuration check ===
 
-✅ Pinecone          connected (index: 'the-gaffer')
-✅ PostgreSQL (RO)   connected (localhost:5432/gaffer)
-✅ PostgreSQL (ETL)  connected (localhost:5432/gaffer)
+✅ Pinecone          connected (index: 'fpl-context')
+✅ PostgreSQL (RO)   connected (localhost:5432/fpl)
+✅ PostgreSQL (ETL)  connected (localhost:5432/fpl)
 ✅ Guardian API      registered key configured
 
 ✅ All required components OK

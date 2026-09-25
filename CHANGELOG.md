@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-09-25
+
+### Fixed
+
+- **Old press articles were never deleted.** The 14-day cleanup used a metadata
+  filter on `pub_timestamp`, which silently skipped articles stored without that
+  field, so articles from months ago stayed in the index and showed up in
+  answers. Cleanup now scans every document in the namespace and, for articles
+  lacking `pub_timestamp`, dates them from their `date` field; anything older
+  than 14 days (or with no usable date) is deleted. Player-news pruning uses the
+  same scan. Unknown document types are left alone. The scan needs a serverless
+  Pinecone index (`Index.list`).
+- **Search results no longer return whole articles.** Each result's text is now
+  cut to about 1,500 characters at a word boundary, and the article URL is
+  appended when the document has one, so answers are faster and cheaper.
+
+### Changed
+
+- **Removed all references to the predecessor project.** Tool descriptions and docs
+  now say "FPL". The default Pinecone index name is now `fpl-context`, and the
+  example database name and roles are `fpl`, `fpl_readonly` and `fpl_etl`. If your
+  index has a different name, set `PINECONE_INDEX_NAME` explicitly (the README
+  has always shown this); setups that already do are unaffected.
+
 ## [0.5.0] — 2026-09-25
 
 ### Fixed
@@ -35,7 +59,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **Removed the `player_xpts` view** from `db/schema.sql`, the tool description and
-  the docs. It was a Gaffer-specific projection that nothing here computes, so it
+  the docs. It was a projection view that nothing in this project computes, so it
   could only ever hold placeholder values. Existing databases can drop it with
   `DROP MATERIALIZED VIEW IF EXISTS player_xpts;`.
 - `players.team_fpl_id` is nullable in `db/schema.sql`. Existing databases:
@@ -98,7 +122,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   supported variables with placeholder values.
 - **`db/schema.sql`** — reference PostgreSQL schema (tables + example
   read-only/ETL role grants) for anyone provisioning a database for this
-  server outside of The Gaffer.
+  server.
 - **`.github/workflows/publish.yml`** — builds sdist/wheel and publishes to
   PyPI via Trusted Publishing (OIDC) on `v*.*.*` tag push.
 - **README overhaul** — added a linear Quickstart, a "Provisioning your own
@@ -127,7 +151,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   failure, so CI marks the run red and GitHub sends a failure email.
 - **Empty env vars fall back to defaults.** `GUARDIAN_API_KEY` and
   `PINECONE_INDEX_NAME` set to an empty string (what GitHub Actions passes for
-  an unset secret) previously overrode the `test` / `the-gaffer` defaults.
+  an unset secret) previously overrode the `test` / default-index-name defaults.
 - **`mcp` dependency pinned to `<2.0.0`** — `server.py` uses the mcp 1.x
   low-level `Server` decorator API (`@server.list_tools()` etc.), which
   mcp 2.x removed. The previous unbounded `mcp>=1.0.0` constraint meant a
@@ -146,8 +170,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   PL standings fetch (Thread 2) has been deleted along with the `_sports_get`
   helper, `_SPORTS_BASE` / `_PL_LEAGUE_ID` constants, and the
   `_current_season_start_year` helper. The job now runs a single FPL fetch
-  thread plus the delta writer. The Gaffer app no longer consumes API-Sports
-  data, so the dependency is no longer needed.
+  thread plus the delta writer. Nothing consumes API-Sports data any
+  more, so the dependency is no longer needed.
 
 - **`api_sports_key` from `config.py`** and the matching `API_SPORTS_KEY` env
   var from `.github/workflows/ingest_match_data.yml`, `tests/conftest.py`, the
@@ -159,21 +183,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Package scaffolding** — `sports-context-mcp` structured as a standalone,
   installable Python package (`pyproject.toml`) ready to be extracted into its
-  own repository. Dependencies are declared explicitly and do not rely on the
-  Gaffer's `requirements.txt`.
+  own repository. Dependencies are declared explicitly and do not rely on any
+  external requirements file.
 
 - **`config.py`** — Self-contained configuration module that reads from
   environment variables (and a `.env` file if `python-dotenv` is installed).
-  Uses the same variable names as the Gaffer server so a single `.env` covers
-  both packages during local development.
+  Local development picks up a `.env` file automatically.
 
 - **`tools/query_press_conferences.py`** — MCP tool that performs semantic search
   over the Pinecone `press` namespace. Embeds queries with `multilingual-e5-large`
-  via Pinecone built-in inference and applies the same recency-weighted re-ranking
-  formula used in the Gaffer's `server/rag.py`.
+  via Pinecone built-in inference and applies a recency-weighted re-ranking
+  formula.
 
 - **`tools/query_historical_stats.py`** — MCP tool that executes read-only SQL
-  SELECT statements against the Gaffer PostgreSQL database. Includes a mutation
+  SELECT statements against the FPL PostgreSQL database. Includes a mutation
   keyword blocklist, a 10-second statement timeout, and a 100-row result cap.
   Inline schema description helps LLMs construct valid queries without a separate
   schema-inspection tool call.

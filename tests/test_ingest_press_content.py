@@ -14,11 +14,13 @@ import requests
 from jobs.ingest_press_content import (
     BBCSportFetcher,
     GuardianAPIFetcher,
-    _cleanup_stale_player_news,
+    _cleanup_stale_docs,
     _days_ago,
     _doc_id,
+    _doc_timestamp,
     _existing_ids,
     _fetch_player_news_docs,
+    _find_stale_ids,
     _recency_score,
     _upsert,
     main,
@@ -372,7 +374,7 @@ def test_run_collects_from_both_fetchers():
         patch.object(GuardianAPIFetcher, "fetch", return_value=[guardian_doc]),
         patch("jobs.ingest_press_content._fetch_player_news_docs", return_value=[]),
         patch("jobs.ingest_press_content._upsert", return_value=1) as mock_upsert,
-        patch("jobs.ingest_press_content._cleanup_stale_press"),
+        patch("jobs.ingest_press_content._cleanup_stale_docs"),
     ):
         run()
 
@@ -396,7 +398,7 @@ def test_run_continues_if_one_fetcher_fails():
         patch.object(GuardianAPIFetcher, "fetch", side_effect=RuntimeError("Guardian API down")),
         patch("jobs.ingest_press_content._fetch_player_news_docs", return_value=[]),
         patch("jobs.ingest_press_content._upsert", return_value=1) as mock_upsert,
-        patch("jobs.ingest_press_content._cleanup_stale_press"),
+        patch("jobs.ingest_press_content._cleanup_stale_docs"),
     ):
         # Should not raise even though Guardian fetcher fails
         run()
@@ -425,7 +427,7 @@ def test_run_dry_run_skips_upsert():
         patch.object(GuardianAPIFetcher, "fetch", return_value=[]),
         patch("jobs.ingest_press_content._fetch_player_news_docs", return_value=[]),
         patch("jobs.ingest_press_content._upsert") as mock_upsert,
-        patch("jobs.ingest_press_content._cleanup_stale_press") as mock_cleanup,
+        patch("jobs.ingest_press_content._cleanup_stale_docs") as mock_cleanup,
     ):
         run(dry_run=True)
 
@@ -441,7 +443,7 @@ def test_run_dry_run_still_fetches():
         patch.object(GuardianAPIFetcher, "fetch", return_value=[]) as mock_guardian,
         patch("jobs.ingest_press_content._fetch_player_news_docs", return_value=[]) as mock_fpl,
         patch("jobs.ingest_press_content._upsert"),
-        patch("jobs.ingest_press_content._cleanup_stale_press"),
+        patch("jobs.ingest_press_content._cleanup_stale_docs"),
     ):
         run(dry_run=True)
 
@@ -559,41 +561,114 @@ def test_player_news_docs_carry_refreshed_at_and_skip_players_without_news():
     assert docs[0][2]["type"] == "player_news"
 
 
-def _match(doc_id: str, refreshed_at: float | None) -> MagicMock:
-    m = MagicMock()
-    m.id = doc_id
-    m.metadata = {} if refreshed_at is None else {"refreshed_at": refreshed_at}
-    return m
+NOW = 1_800_000_000.0  # fixed "current time" for cleanup tests
+DAY = 86400.0
 
 
-def test_cleanup_stale_player_news_deletes_only_unrefreshed():
-    """Docs older than the run (or lacking refreshed_at) are deleted; fresh ones kept."""
+def _vec(meta: dict | None) -> MagicMock:
+    v = MagicMock()
+    v.metadata = meta
+    return v
+
+
+def _index_with(docs: dict[str, dict | None]) -> MagicMock:
+    """A fake index whose list() yields two id pages and fetch() returns the given docs."""
     index = MagicMock()
-    index.query.return_value.matches = [
-        _match("fresh", 500.0),
-        _match("stale", 100.0),
-        _match("legacy_no_field", None),
-    ]
+    ids = list(docs)
+    half = max(1, len(ids) // 2)
+    index.list.return_value = iter([ids[:half], ids[half:]] if ids[half:] else [ids])
+    index.fetch.side_effect = lambda ids, namespace: MagicMock(
+        vectors={i: _vec(docs[i]) for i in ids}
+    )
+    return index
 
-    deleted = _cleanup_stale_player_news(index, run_started=400.0)
+
+def test_doc_timestamp_prefers_pub_timestamp_then_parses_date():
+    """Legacy docs without pub_timestamp are dated from their RFC 2822 / ISO `date`."""
+    assert (
+        _doc_timestamp({"pub_timestamp": 123.0, "date": "Sat, 25 Apr 2026 21:43:38 GMT"}) == 123.0
+    )
+    rfc = _doc_timestamp({"date": "Sat, 25 Apr 2026 21:43:38 GMT"})
+    iso = _doc_timestamp({"date": "2026-04-25T21:43:38Z"})
+    assert rfc == iso and rfc is not None
+    assert _doc_timestamp({"date": "not a date"}) is None
+    assert _doc_timestamp({}) is None
+
+
+def test_find_stale_ids_handles_legacy_docs_and_leaves_other_types_alone():
+    """Old press articles are found even without pub_timestamp; unknown types are kept."""
+    docs = {
+        "fresh_article": {"type": "press_article", "pub_timestamp": NOW - 2 * DAY},
+        "old_article": {"type": "press_article", "pub_timestamp": NOW - 30 * DAY},
+        "legacy_old": {"type": "press_article", "date": "Sat, 25 Apr 2020 21:43:38 GMT"},
+        "undated": {"type": "press_article"},
+        "fresh_news": {"type": "player_news", "refreshed_at": NOW},
+        "stale_news": {"type": "player_news", "refreshed_at": NOW - 5 * DAY},
+        "legacy_news": {"type": "player_news"},
+        "other": {"type": "something_else"},
+        "no_meta": None,
+    }
+
+    with patch("jobs.ingest_press_content.time.time", return_value=NOW):
+        press, news = _find_stale_ids(
+            _index_with(docs), cutoff=NOW - 14 * DAY, run_started=NOW - 1, prune_player_news=True
+        )
+
+    assert sorted(press) == ["legacy_old", "old_article", "undated"]
+    assert sorted(news) == ["legacy_news", "stale_news"]
+
+
+def test_find_stale_ids_accepts_listitem_objects():
+    """Newer Pinecone SDKs yield ListItem objects (with .id) from list(), not strings."""
+    docs = {"old": {"type": "press_article", "pub_timestamp": NOW - 40 * DAY}}
+    index = _index_with(docs)
+    item = MagicMock()
+    item.id = "old"
+    index.list.return_value = iter([[item]])
+
+    press, _ = _find_stale_ids(
+        index, cutoff=NOW - 14 * DAY, run_started=NOW, prune_player_news=False
+    )
+
+    assert press == ["old"]
+    assert index.fetch.call_args.kwargs["ids"] == ["old"]  # plain string ids reach fetch
+
+
+def test_find_stale_ids_skips_player_news_when_not_pruning():
+    """With prune_player_news=False no player_news doc is reported, however old."""
+    docs = {"n": {"type": "player_news", "refreshed_at": 1.0}}
+    press, news = _find_stale_ids(_index_with(docs), NOW, NOW, prune_player_news=False)
+    assert press == [] and news == []
+
+
+def test_cleanup_stale_docs_deletes_stale_ids_in_batches():
+    """Every stale id is deleted (press articles and unrefreshed player news)."""
+    docs = {
+        "keep": {"type": "press_article", "pub_timestamp": NOW},
+        "old": {"type": "press_article", "pub_timestamp": NOW - 40 * DAY},
+        "gone_news": {"type": "player_news", "refreshed_at": 1.0},
+    }
+    index = _index_with(docs)
+
+    with patch("jobs.ingest_press_content.time.time", return_value=NOW):
+        deleted = _cleanup_stale_docs(index, run_started=NOW - 1, prune_player_news=True)
 
     assert deleted == 2
-    index.delete.assert_called_once()
-    assert sorted(index.delete.call_args.kwargs["ids"]) == ["legacy_no_field", "stale"]
-    assert index.query.call_args.kwargs["filter"] == {"type": {"$eq": "player_news"}}
+    deleted_ids = [i for c in index.delete.call_args_list for i in c.kwargs["ids"]]
+    assert sorted(deleted_ids) == ["gone_news", "old"]
 
 
-def test_cleanup_stale_player_news_is_best_effort():
-    """A Pinecone error is swallowed (logged), not raised."""
+def test_cleanup_stale_docs_is_best_effort():
+    """A Pinecone error is logged, not raised, and nothing is deleted."""
     index = MagicMock()
-    index.query.side_effect = RuntimeError("pinecone down")
+    index.list.side_effect = RuntimeError("pinecone down")
 
-    assert _cleanup_stale_player_news(index, run_started=1.0) == 0
+    assert _cleanup_stale_docs(index, run_started=1.0, prune_player_news=True) == 0
     index.delete.assert_not_called()
 
 
 def test_run_prunes_player_news_after_upsert():
-    """run() overwrites current player news, then prunes docs it did not refresh."""
+    """run() overwrites current player news, then cleans up with player-news pruning on."""
     news_doc = ("p1", "news", {"text": "news", "type": "player_news", "refreshed_at": 1.0})
 
     with (
@@ -602,26 +677,24 @@ def test_run_prunes_player_news_after_upsert():
         patch.object(GuardianAPIFetcher, "fetch", return_value=[]),
         patch("jobs.ingest_press_content._fetch_player_news_docs", return_value=[news_doc]),
         patch("jobs.ingest_press_content._upsert", return_value=1) as mock_upsert,
-        patch("jobs.ingest_press_content._cleanup_stale_press"),
-        patch("jobs.ingest_press_content._cleanup_stale_player_news") as mock_prune,
+        patch("jobs.ingest_press_content._cleanup_stale_docs") as mock_cleanup,
     ):
         assert run() is True
 
     assert mock_upsert.call_args.kwargs["always_upsert"] is True
-    mock_prune.assert_called_once()
+    assert mock_cleanup.call_args.kwargs["prune_player_news"] is True
 
 
 def test_run_skips_player_news_prune_when_fetch_empty():
-    """An empty player-news fetch (API outage) must not wipe existing docs."""
+    """An empty player-news fetch (API outage) must not wipe existing injury docs."""
     with (
         patch("jobs.ingest_press_content.Pinecone"),
         patch.object(BBCSportFetcher, "fetch", return_value=[]),
         patch.object(GuardianAPIFetcher, "fetch", return_value=[]),
         patch("jobs.ingest_press_content._fetch_player_news_docs", return_value=[]),
         patch("jobs.ingest_press_content._upsert", return_value=0),
-        patch("jobs.ingest_press_content._cleanup_stale_press"),
-        patch("jobs.ingest_press_content._cleanup_stale_player_news") as mock_prune,
+        patch("jobs.ingest_press_content._cleanup_stale_docs") as mock_cleanup,
     ):
         run()
 
-    mock_prune.assert_not_called()
+    assert mock_cleanup.call_args.kwargs["prune_player_news"] is False

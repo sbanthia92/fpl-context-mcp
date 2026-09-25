@@ -1,8 +1,6 @@
 -- Reference schema for standalone deployments of fpl-context-mcp.
 --
--- If you're running this server against The Gaffer's existing database, you
--- don't need this file — the tables already exist there. This is only for
--- people provisioning a fresh PostgreSQL database to use with
+-- Run this against a fresh PostgreSQL database before using
 -- query_historical_stats and jobs/ingest_match_data.py.
 --
 -- Columns and conflict keys match the INSERT ... ON CONFLICT statements in
@@ -150,19 +148,19 @@ CREATE TABLE IF NOT EXISTS gw_player_stats (
 );
 
 -- Roles used by this package (see README "Prerequisites" / config.py):
---   gaffer_readonly — used by query_historical_stats (SELECT only)
---   gaffer_etl      — used by jobs/ingest_match_data.py (SELECT + INSERT/UPDATE)
+--   fpl_readonly — used by query_historical_stats (SELECT only)
+--   fpl_etl      — used by jobs/ingest_match_data.py (SELECT + INSERT/UPDATE)
 --
 -- Example role setup — adjust passwords/hosts for your environment:
 --
--- CREATE ROLE gaffer_readonly WITH LOGIN PASSWORD 'change-me';
--- GRANT CONNECT ON DATABASE gaffer TO gaffer_readonly;
--- GRANT USAGE ON SCHEMA public TO gaffer_readonly;
--- GRANT SELECT ON ALL TABLES IN SCHEMA public TO gaffer_readonly;
--- ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO gaffer_readonly;
+-- CREATE ROLE fpl_readonly WITH LOGIN PASSWORD 'change-me';
+-- GRANT CONNECT ON DATABASE fpl TO fpl_readonly;
+-- GRANT USAGE ON SCHEMA public TO fpl_readonly;
+-- GRANT SELECT ON ALL TABLES IN SCHEMA public TO fpl_readonly;
+-- ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO fpl_readonly;
 --
--- CREATE ROLE gaffer_etl WITH LOGIN PASSWORD 'change-me';
--- GRANT CONNECT ON DATABASE gaffer TO gaffer_etl;
--- GRANT USAGE ON SCHEMA public TO gaffer_etl;
--- GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO gaffer_etl;
--- ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE ON TABLES TO gaffer_etl;
+-- CREATE ROLE fpl_etl WITH LOGIN PASSWORD 'change-me';
+-- GRANT CONNECT ON DATABASE fpl TO fpl_etl;
+-- GRANT USAGE ON SCHEMA public TO fpl_etl;
+-- GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO fpl_etl;
+-- ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE ON TABLES TO fpl_etl;
