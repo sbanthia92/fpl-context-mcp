@@ -116,7 +116,8 @@ PINECONE_INDEX_NAME=the-gaffer   # optional, defaults to 'the-gaffer'
 
 # The Guardian open platform API key
 # Register free at https://open-platform.theguardian.com/access/
-# Defaults to 'test' (public key — lower rate limit, no full article body)
+# Recommended: without a key the Guardian source is skipped (BBC Sport only) —
+# the old public 'test' key is rejected by the API.
 GUARDIAN_API_KEY=your-key-here
 ```
 
@@ -126,7 +127,7 @@ GUARDIAN_API_KEY=your-key-here
 |---|---|
 | `query_historical_stats` tool | `DATABASE_URL` |
 | `query_press_conferences` tool | `PINECONE_API_KEY` |
-| `ingest_press_content` job | `PINECONE_API_KEY`, `GUARDIAN_API_KEY` |
+| `ingest_press_content` job | `PINECONE_API_KEY` (plus `GUARDIAN_API_KEY` for Guardian articles) |
 | `ingest_match_data` job | `DATABASE_ETL_URL` (or `DATABASE_URL`) |
 
 Run `sports-context-mcp --check` any time to confirm all of the above are set correctly and reachable — see [Verifying connectivity](#verifying-connectivity---check).
@@ -181,7 +182,7 @@ Run both **once, right after configuring your `.env`**, before registering the s
 
 ## Keeping data fresh (ongoing)
 
-**This is not a one-time step.** Fixtures change weekly, player stats update after every match, and press articles are deleted from the index after 14 days (`ingest_press_content` prunes stale docs on every run). If you seed once and never run these jobs again, a query a month later will hit a Pinecone namespace with **zero documents** (everything aged out) and a Postgres database that's **missing every fixture since your last run**.
+**This is not a one-time step.** Fixtures change weekly, player stats update after every match, press articles are deleted from the index after 14 days, and injury/availability news is rewritten on every run so it reflects what FPL currently says (`ingest_press_content` prunes stale docs each time). If you seed once and never run these jobs again, a query a month later will hit a Pinecone namespace with **zero documents** (everything aged out) and a Postgres database that's **missing every fixture since your last run**.
 
 You need something to invoke `sports-context-ingest-press` and `sports-context-ingest-match` on a recurring schedule, indefinitely, for as long as the MCP server is in use. Pick whichever fits your setup:
 
@@ -240,7 +241,7 @@ Best if you don't have a machine that's always on. You don't fork this project �
              DATABASE_ETL_URL: ${{ secrets.DATABASE_ETL_URL }}
    ```
 
-3. In that repo: **Settings → Secrets and variables → Actions → New repository secret**, and add `PINECONE_API_KEY`, `DATABASE_URL`, and `DATABASE_ETL_URL`. `PINECONE_INDEX_NAME` and `GUARDIAN_API_KEY` are optional — leave them out and the defaults (`the-gaffer`, and the free `test` Guardian key) apply.
+3. In that repo: **Settings → Secrets and variables → Actions → New repository secret**, and add `PINECONE_API_KEY`, `DATABASE_URL`, and `DATABASE_ETL_URL`. `GUARDIAN_API_KEY` is strongly recommended — without it the Guardian source is skipped and only BBC Sport articles are ingested (register a free key at [open-platform.theguardian.com](https://open-platform.theguardian.com/access/)). `PINECONE_INDEX_NAME` is optional and defaults to `the-gaffer`.
 4. Open the **Actions** tab, pick "Ingest sports data", and click **Run workflow** once to seed your data. From then on it runs by itself on the schedule.
 
 Notes:
@@ -344,7 +345,7 @@ Output example:
 ✅ All required components OK
 ```
 
-The command exits with code `0` if all required components pass, or `1` if any required component fails. Optional components (Guardian API) emit warnings but do not cause a non-zero exit. Note that `--check` only verifies *connectivity* — it doesn't tell you whether your tables/index actually have data in them; for that, see [Seeding data](#seeding-data-required-before-first-use).
+The command exits with code `0` if all required components pass, or `1` if any required component fails. Optional components (Guardian API) emit warnings but do not cause a non-zero exit — a missing `GUARDIAN_API_KEY` just means Guardian articles are skipped. Note that `--check` only verifies *connectivity* — it doesn't tell you whether your tables/index actually have data in them; for that, see [Seeding data](#seeding-data-required-before-first-use).
 
 ---
 

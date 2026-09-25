@@ -104,10 +104,10 @@ def check_config() -> None:
             ok = False
 
     # --- Guardian API (optional) ---
-    if cfg.guardian_api_key == "test":
+    if not cfg.guardian_api_key:
         lines.append(
-            "⚠️  GUARDIAN_API_KEY  using 'test' key (bodyText unavailable — "
-            "register at open-platform.theguardian.com for full article text)"
+            "⚠️  GUARDIAN_API_KEY  not set (Guardian articles will be skipped, BBC Sport only — "
+            "register a free key at open-platform.theguardian.com/access)"
         )
     else:
         lines.append("✅ Guardian API      registered key configured")

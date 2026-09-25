@@ -56,6 +56,7 @@ log = logging.getLogger(__name__)
 
 # Pinecone settings — must match what the Gaffer server/rag.py expects.
 _NAMESPACE = "press"
+_EMBED_DIM = 1024  # multilingual-e5-large output dimension
 _EMBED_MODEL = "multilingual-e5-large"
 _UPSERT_BATCH = 96  # Pinecone recommended batch size for this model
 
@@ -326,10 +327,9 @@ class GuardianAPIFetcher(_BaseFetcher):
     """
     Fetches Premier League content from The Guardian open content API.
 
-    Uses the free-tier API key 'test' by default (GUARDIAN_API_KEY env var).
-    The test key is rate-limited and does not return full article body text.
-    Register at https://open-platform.theguardian.com/access/ for a production key
-    that unlocks the ``fields=bodyText`` parameter.
+    Requires a registered API key in GUARDIAN_API_KEY (free at
+    https://open-platform.theguardian.com/access/). The old public 'test' key is
+    rejected by the API with HTTP 401, so without a key this fetcher is skipped.
 
     Endpoint: https://content.guardianapis.com/search
     """
@@ -341,15 +341,22 @@ class GuardianAPIFetcher(_BaseFetcher):
         """
         Query the Guardian API for recent Premier League articles.
 
-        Requests the ``headline`` and ``trailText`` fields (available on all key
-        tiers). If the API key supports it, ``bodyText`` is also requested to
-        provide richer context for embedding.
+        Requests ``headline``, ``trailText`` and ``bodyText``, falling back to the
+        trail text if a key tier does not return the full body.
 
         Returns:
-            List of (doc_id, text, metadata) tuples. Returns empty list on error.
+            List of (doc_id, text, metadata) tuples. Returns empty list if no key is
+            configured or the request fails.
         """
         api_key = cfg.guardian_api_key
-        log.info("[%s] querying Guardian API (key tier: %s)", self.source_name, api_key)
+        if not api_key:
+            log.warning(
+                "[%s] GUARDIAN_API_KEY is not set — skipping Guardian (BBC Sport only). "
+                "Register a free key at https://open-platform.theguardian.com/access/",
+                self.source_name,
+            )
+            return []
+        log.info("[%s] querying Guardian API", self.source_name)
 
         from datetime import timedelta
 
@@ -359,7 +366,6 @@ class GuardianAPIFetcher(_BaseFetcher):
             "q": "premier league",
             "section": "football",
             "from-date": cutoff,
-            # Request structured fields; bodyText is only populated with a registered key
             "show-fields": "headline,trailText,bodyText",
             "order-by": "newest",
             "page-size": 50,
@@ -421,18 +427,26 @@ FETCHERS: list[_BaseFetcher] = [
 # ---------------------------------------------------------------------------
 
 
-def _fetch_player_news_docs() -> list[tuple[str, str, dict]]:
+def _fetch_player_news_docs(
+    refreshed_at: float | None = None,
+) -> list[tuple[str, str, dict]]:
     """
     Fetch player injury/availability news from the FPL bootstrap-static endpoint.
 
-    Only players with a non-empty 'news' field are included. The document ID is
-    derived from a hash of the news text so unchanged entries are not re-embedded.
-    This matches the ID strategy used in pipeline/ingest_press.py.
+    Only players with a non-empty 'news' field are included. Each player has ONE
+    document with a stable ID (derived from the FPL player id), so a changed
+    injury overwrites the previous text in place. Every doc is stamped with
+    ``refreshed_at`` so _cleanup_stale_player_news can delete docs for players whose
+    news FPL has since cleared.
+
+    Args:
+        refreshed_at: Unix timestamp of the current run. Defaults to now.
 
     Returns:
         List of (doc_id, text, metadata) tuples, one per player with news.
         Returns empty list on any HTTP or parse error.
     """
+    refreshed_at = time.time() if refreshed_at is None else refreshed_at
     log.info("Fetching FPL player news from bootstrap-static...")
     try:
         resp = requests.get(_FPL_BOOTSTRAP_URL, timeout=30)
@@ -476,11 +490,11 @@ def _fetch_player_news_docs() -> list[tuple[str, str, dict]]:
             "chance_of_playing": chance,
             # Player news is always treated as fresh — FPL updates it live.
             "recency_score": 1.0,
+            "refreshed_at": refreshed_at,
         }
-        # Include a hash of the news content in the ID so re-embedding only
-        # happens when the actual content changes, not when the date ticks.
-        news_hash = hashlib.md5(news.encode()).hexdigest()[:8]
-        doc_id = _doc_id(f"player_news_{p['id']}_{news_hash}")
+        # One stable ID per player: new news overwrites the old doc instead of
+        # leaving the outdated one behind.
+        doc_id = _doc_id(f"player_news_{p['id']}")
         docs.append((doc_id, text, meta))
 
     log.info("FPL player news: %d players with news.", len(docs))
@@ -540,6 +554,44 @@ def _cleanup_stale_press(index) -> None:
     except Exception as exc:
         # Non-fatal: stale cleanup is best-effort.
         log.warning("Stale press cleanup skipped: %s", exc)
+
+
+def _cleanup_stale_player_news(index, run_started: float) -> int:
+    """
+    Delete player_news docs that were not refreshed by the current run.
+
+    A player whose news FPL has cleared (e.g. back from injury) no longer gets a
+    doc, so their old one keeps its previous ``refreshed_at`` and is removed here.
+    Docs written before ``refreshed_at`` existed count as stale too.
+
+    Selects by metadata query rather than a delete filter so docs missing the
+    field are handled without relying on ``$exists`` support.
+
+    Args:
+        index:       Pinecone Index object.
+        run_started: Unix timestamp taken at the start of the current run.
+
+    Returns:
+        Number of docs deleted (0 on failure — cleanup is best-effort).
+    """
+    try:
+        resp = index.query(
+            vector=[1.0] + [0.0] * (_EMBED_DIM - 1),
+            top_k=1000,
+            namespace=_NAMESPACE,
+            filter={"type": {"$eq": "player_news"}},
+            include_metadata=True,
+        )
+        stale_ids = [
+            m.id for m in resp.matches if (m.metadata or {}).get("refreshed_at", 0) < run_started
+        ]
+        for start in range(0, len(stale_ids), 1000):
+            index.delete(ids=stale_ids[start : start + 1000], namespace=_NAMESPACE)
+        log.info("Deleted %d outdated player news docs.", len(stale_ids))
+        return len(stale_ids)
+    except Exception as exc:
+        log.warning("Stale player news cleanup skipped: %s", exc)
+        return 0
 
 
 def _upsert(
@@ -653,6 +705,8 @@ def run(dry_run: bool = False) -> bool:
         log.error("PINECONE_API_KEY is not set — aborting press content ingestion.")
         return False
 
+    run_started = time.time()
+
     if dry_run:
         log.info("[dry run] press ingestion — fetches will run; Pinecone writes are skipped.")
 
@@ -682,7 +736,7 @@ def run(dry_run: bool = False) -> bool:
     log.info("Concurrent fetch complete: %d press articles collected.", len(press_docs))
 
     # Step 2: FPL player news (sequential — one request, no parallelism needed).
-    player_news_docs = _fetch_player_news_docs()
+    player_news_docs = _fetch_player_news_docs(run_started)
 
     if dry_run:
         log.info(
@@ -700,15 +754,24 @@ def run(dry_run: bool = False) -> bool:
         log.info("Upserting %d press articles (skip existing)...", len(press_docs))
         total += _upsert(pc, index, press_docs, always_upsert=False)
 
-    # Step 4: Upsert player news (content-hash IDs mean always_upsert=False is safe;
-    # unchanged news has the same ID and will be skipped automatically).
+    # Step 4: Upsert player news, overwriting each player's single doc. Stable IDs
+    # mean a changed injury replaces the old text; always_upsert also refreshes
+    # ``refreshed_at`` so still-current news survives the cleanup below.
     if player_news_docs:
-        log.info("Upserting %d player news docs (skip unchanged)...", len(player_news_docs))
-        total += _upsert(pc, index, player_news_docs, always_upsert=False)
+        log.info("Upserting %d player news docs (overwrite)...", len(player_news_docs))
+        total += _upsert(pc, index, player_news_docs, always_upsert=True)
 
     # Step 5: Clean up stale press articles.
     log.info("Cleaning up stale press articles (>%d days old)...", _MAX_PRESS_AGE_DAYS)
     _cleanup_stale_press(index)
+
+    # Only prune player news after a successful fetch + upsert. An empty result
+    # means the FPL fetch failed (or nobody has news), so keep what we have rather
+    # than wiping every injury doc during an API outage.
+    if player_news_docs:
+        _cleanup_stale_player_news(index, run_started)
+    else:
+        log.warning("No player news fetched — skipping player news cleanup.")
 
     log.info(
         "Press content ingestion complete. %d documents upserted to namespace '%s'.",
