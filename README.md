@@ -1,6 +1,8 @@
 # fpl-context-mcp
 
-An [MCP](https://modelcontextprotocol.io) server that gives Claude (or any MCP client) two tools for answering Fantasy Premier League (FPL) and Premier League football questions:
+<!-- mcp-name: io.github.sbanthia92/fpl-context-mcp -->
+
+An [MCP](https://modelcontextprotocol.io) server that gives any MCP-capable AI agent (Claude, ChatGPT, Gemini CLI, Codex, Cursor, VS Code Copilot and others) two tools for answering Fantasy Premier League (FPL) and Premier League football questions:
 
 | Tool | What it does |
 |---|---|
@@ -28,6 +30,8 @@ Two ingestion jobs keep that data populated and current:
 - [Seeding data (required before first use)](#seeding-data-required-before-first-use)
 - [Keeping data fresh (ongoing)](#keeping-data-fresh-ongoing)
 - [Registering with Claude Desktop](#registering-with-claude-desktop)
+- [Other AI clients (local)](#other-ai-clients-local)
+- [Remote access over HTTP (ChatGPT and other URL-only clients)](#remote-access-over-http-chatgpt-and-other-url-only-clients)
 - [Running the server standalone](#running-the-server-standalone)
 - [Verifying connectivity (--check)](#verifying-connectivity---check)
 - [Dry-run mode](#dry-run-mode)
@@ -35,6 +39,8 @@ Two ingestion jobs keep that data populated and current:
 - [Database schema](#database-schema)
 - [Running tests](#running-tests)
 - [Extending with new press sources](#extending-with-new-press-sources)
+- [Data sources and disclaimer](#data-sources-and-disclaimer)
+- [License](#license)
 
 ---
 
@@ -48,7 +54,7 @@ The full path from zero to a working MCP tool, in order. Each step links to deta
 4. **Verify connectivity**: `fpl-context-mcp --check` — confirms every credential works before you go further.
 5. **Seed data**: run the two ingestion commands, then the one-time history backfill, so there's actually something to query — see [Seeding data](#seeding-data-required-before-first-use).
 6. **Schedule ongoing ingestion**: set up cron (or equivalent) to keep re-running the two ingestion commands (not the backfill) indefinitely — see [Keeping data fresh](#keeping-data-fresh-ongoing). Skipping this is the #1 cause of "the tool returns nothing" reports.
-7. **Register with Claude Desktop**: add the server to `claude_desktop_config.json` and restart Claude — see [Registering with Claude Desktop](#registering-with-claude-desktop).
+7. **Connect your AI client**: [Claude Desktop](#registering-with-claude-desktop), [Claude Code, Cursor, VS Code, Windsurf, Gemini CLI or Codex](#other-ai-clients-local), or — for ChatGPT and other clients that only accept a URL — [run it over HTTP](#remote-access-over-http-chatgpt-and-other-url-only-clients).
 
 ---
 
@@ -119,6 +125,10 @@ PINECONE_INDEX_NAME=fpl-context   # optional, defaults to 'fpl-context'
 # Recommended: without a key the Guardian source is skipped (BBC Sport only) —
 # the old public 'test' key is rejected by the API.
 GUARDIAN_API_KEY=your-key-here
+
+# HTTP transport only (fpl-context-mcp --transport http). Requests to /mcp must
+# send "Authorization: Bearer <token>". Leave empty only when bound to localhost.
+# MCP_AUTH_TOKEN=
 ```
 
 ### Which variables does each component need?
@@ -325,6 +335,91 @@ Restart Claude Desktop. You should see `fpl-context` appear in the tools panel. 
 
 ---
 
+## Other AI clients (local)
+
+Any client that can launch a local MCP server (stdio) works the same way: run the `fpl-context-mcp` command with `DATABASE_URL` and `PINECONE_API_KEY` in its environment. Swap in your own values below.
+
+**Claude Code**
+
+```bash
+claude mcp add fpl-context -e DATABASE_URL=postgresql://fpl_readonly:password@localhost:5432/fpl -e PINECONE_API_KEY=pcsk_... -- fpl-context-mcp
+```
+
+**Cursor** (`~/.cursor/mcp.json`), **Windsurf** (`~/.codeium/windsurf/mcp_config.json`) and **Gemini CLI** (`~/.gemini/settings.json`) all use the same `mcpServers` shape as Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "fpl-context": {
+      "command": "fpl-context-mcp",
+      "env": {
+        "DATABASE_URL": "postgresql://fpl_readonly:password@localhost:5432/fpl",
+        "PINECONE_API_KEY": "pcsk_..."
+      }
+    }
+  }
+}
+```
+
+**VS Code (Copilot agent mode)** — `.vscode/mcp.json` in your workspace:
+
+```json
+{
+  "servers": {
+    "fpl-context": {
+      "type": "stdio",
+      "command": "fpl-context-mcp",
+      "env": {
+        "DATABASE_URL": "postgresql://fpl_readonly:password@localhost:5432/fpl",
+        "PINECONE_API_KEY": "pcsk_..."
+      }
+    }
+  }
+}
+```
+
+**OpenAI Codex CLI** — `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.fpl-context]
+command = "fpl-context-mcp"
+env = { DATABASE_URL = "postgresql://fpl_readonly:password@localhost:5432/fpl", PINECONE_API_KEY = "pcsk_..." }
+```
+
+**Without installing first** — if you have [uv](https://docs.astral.sh/uv/), use `"command": "uvx"` with `"args": ["fpl-context-mcp"]` in any of the configs above.
+
+**Your own agent code** — the MCP SDKs (Python, TypeScript) and agent frameworks such as the OpenAI Agents SDK can launch `fpl-context-mcp` as a stdio server, or connect to it over HTTP as below.
+
+---
+
+## Remote access over HTTP (ChatGPT and other URL-only clients)
+
+Some clients can't launch a local process — they only accept a server URL. That includes **ChatGPT** (Settings → Apps & Connectors → Advanced → Developer mode → create a connector) and **custom connectors on claude.ai**. For these, run the server with the streamable HTTP transport on a machine with a public HTTPS address:
+
+```bash
+MCP_AUTH_TOKEN=some-long-random-string \
+fpl-context-mcp --transport http --host 0.0.0.0 --port 8000
+```
+
+- The MCP endpoint is `https://<your-host>/mcp`; `GET /health` returns `ok` for load-balancer and platform health checks.
+- `--transport`, `--host` and `--port` can also be set with `MCP_TRANSPORT`, `MCP_HOST` and `MCP_PORT` (or the `PORT` variable that Render, Cloud Run, Heroku and Fly set).
+- The server listens on plain HTTP. Put it behind something that terminates TLS — any of those platforms does, or `cloudflared tunnel` / `ngrok` for a quick test from your own machine.
+- The default bind address is `127.0.0.1`, so nothing is exposed until you pass `--host 0.0.0.0`.
+
+**Authentication.** With `MCP_AUTH_TOKEN` set, every request to `/mcp` must send `Authorization: Bearer <token>`; others get HTTP 401. Clients that let you set headers can use it — for example Claude Code:
+
+```bash
+claude mcp add --transport http fpl-context https://your-host/mcp --header "Authorization: Bearer some-long-random-string"
+```
+
+and the OpenAI Agents SDK / Responses API MCP tool (`headers={"Authorization": "Bearer ..."}`).
+
+> **ChatGPT and claude.ai connectors only support OAuth or no authentication — not a static bearer token.** To use them you currently have to leave `MCP_AUTH_TOKEN` unset (the endpoint is then open to anyone who finds the URL) or put an OAuth-capable proxy in front. If you run it open, understand what that exposes: anyone can run read-only `SELECT`s against the database behind `DATABASE_URL` (10-second timeout, 100-row cap) and use up your Pinecone query quota. Only do that with the dedicated `fpl_readonly` role on a database that holds nothing but FPL data. The server logs a warning at startup when it's bound to a non-local address without a token.
+
+**Where the data comes from.** A hosted server reads *your* database and index, exactly like a local one — you still need the ingestion jobs on a schedule ([Keeping data fresh](#keeping-data-fresh-ongoing)). And because you're now serving results to other people, see [Data sources and disclaimer](#data-sources-and-disclaimer).
+
+---
+
 ## Running the server standalone
 
 ```bash
@@ -335,7 +430,7 @@ fpl-context-mcp
 python server.py
 ```
 
-The server communicates over stdio — it is designed to be launched by an MCP client, not run as a persistent HTTP service. Running it directly is mainly useful for smoke-testing startup and environment variable loading.
+By default the server communicates over stdio — it is designed to be launched by an MCP client, and running it directly is mainly useful for smoke-testing startup and environment variable loading. To run it as a persistent network service instead, use `--transport http` (see [Remote access over HTTP](#remote-access-over-http-chatgpt-and-other-url-only-clients)).
 
 ---
 
@@ -501,6 +596,7 @@ The test suite covers:
 | `tests/test_tools_press.py` | Pinecone query, recency re-ranking, degradation, dry-run |
 | `tests/test_ingest_press_content.py` | BBC/Guardian fetchers, deduplication, orchestration, dry-run |
 | `tests/test_ingest_match_data.py` | Fixture/gameweek upserts, stats selection, thread coordination, rollback, dry-run |
+| `tests/test_server_http.py` | HTTP transport: bearer-token auth, `/health`, no `/mcp` redirect, CLI/env argument parsing |
 | `tests/test_backfill_history.py` | Past-season backfill: season handling, NULL team, best-effort ALTER, exit codes |
 
 ---
@@ -517,6 +613,7 @@ class MySportsFetcher(_BaseFetcher):
         # return a list of (doc_id, text, metadata) tuples
         ...
 
+
 FETCHERS: list[_BaseFetcher] = [BBCSportFetcher(), GuardianAPIFetcher(), MySportsFetcher()]
 ```
 
@@ -525,3 +622,25 @@ Each tuple is `(doc_id, text, metadata)` where:
 - `doc_id` — a stable 32-char hex ID (use `_doc_id(source + url)`)
 - `text` — the full text to embed, prefixed with the source name
 - `metadata` — must include `type`, `source`, `recency_score`, and `pub_timestamp`
+
+---
+
+## Data sources and disclaimer
+
+fpl-context-mcp is an independent open-source project. It is **not affiliated with, endorsed by, or sponsored by** the Premier League, Fantasy Premier League, the BBC, or Guardian News & Media.
+
+The package ships no data. The ingestion jobs fetch it, on your machine and under your credentials, from:
+
+| Source | Used for | Notes |
+|---|---|---|
+| Fantasy Premier League API (`fantasy.premierleague.com/api`) | Players, teams, fixtures, match stats, injury news | Unofficial and undocumented; it can change or rate-limit without notice. |
+| BBC Sport RSS feed | Press articles | BBC feeds are provided for personal, non-commercial use under the BBC's terms. |
+| The Guardian Open Platform | Press articles | Requires your own API key, and use is governed by the Guardian's Open Platform terms (the free developer tier is non-commercial). |
+
+**You are responsible for complying with each source's terms of use** for the data you ingest, store, and — if you [host the server](#remote-access-over-http-chatgpt-and-other-url-only-clients) for other people — serve. This is especially relevant for commercial use and for public deployments. The MIT license below covers this project's code only, not any third-party content it retrieves.
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 Shubham Banthia

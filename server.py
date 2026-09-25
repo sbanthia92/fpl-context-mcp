@@ -1,14 +1,15 @@
 """
 fpl-context-mcp — MCP server entry point.
 
-Exposes two tools over the MCP stdio transport:
+Exposes two tools over MCP, via stdio (default) or streamable HTTP:
 
   query_historical_stats   — read-only SQL against the FPL PostgreSQL database
   query_press_conferences  — semantic search over the Pinecone 'press' namespace
 
 Run locally:
     cd fpl-context-mcp
-    python server.py
+    python server.py                      # stdio
+    python server.py --transport http     # http://127.0.0.1:8000/mcp
 
 Register in Claude Desktop (claude_desktop_config.json):
     {
@@ -122,7 +123,16 @@ def check_config() -> None:
     sys.exit(0 if ok else 1)
 
 
-server = Server("fpl-context-mcp")
+def _package_version() -> str | None:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("fpl-context-mcp")
+    except PackageNotFoundError:  # running from a source checkout without install
+        return None
+
+
+server = Server("fpl-context-mcp", version=_package_version())
 
 
 @server.list_tools()
@@ -237,13 +247,17 @@ async def call_tool(
     return [types.TextContent(type="text", text=result)]
 
 
-async def _serve() -> None:
-    """Wire the MCP server to stdio and run until the client disconnects."""
+def _warn_if_dry_run() -> None:
     if cfg.dry_run:
         log.warning(
             "DRY RUN MODE — tools will return what they would do without side effects. "
             "Set DRY_RUN=false to disable."
         )
+
+
+async def _serve() -> None:
+    """Wire the MCP server to stdio and run until the client disconnects."""
+    _warn_if_dry_run()
     async with stdio_server() as (read_stream, write_stream):
         log.info("fpl-context-mcp server started (stdio transport)")
         await server.run(
@@ -253,14 +267,125 @@ async def _serve() -> None:
         )
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def build_http_app(auth_token: str = ""):
+    """
+    Build the ASGI app for the streamable HTTP transport.
+
+    Routes:
+        /mcp     — MCP streamable HTTP endpoint (stateless, so any replica can
+                   serve any request)
+        /health  — unauthenticated liveness probe for hosting platforms
+
+    Args:
+        auth_token: When non-empty, /mcp requires ``Authorization: Bearer <token>``.
+    """
+    import contextlib
+    import hmac
+
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse, PlainTextResponse
+    from starlette.routing import Route
+
+    session_manager = StreamableHTTPSessionManager(app=server, stateless=True)
+    expected = f"Bearer {auth_token}".encode()
+
+    class _MCPEndpoint:
+        # A class instance (not a function) so Starlette's Route passes the raw
+        # ASGI scope through instead of wrapping it as a request handler.
+        async def __call__(self, scope, receive, send) -> None:
+            if auth_token:
+                headers = dict(scope.get("headers") or [])
+                given = headers.get(b"authorization", b"")
+                if not hmac.compare_digest(given, expected):
+                    response = JSONResponse({"error": "unauthorized"}, status_code=401)
+                    await response(scope, receive, send)
+                    return
+            await session_manager.handle_request(scope, receive, send)
+
+    async def health(request):
+        return PlainTextResponse("ok")
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app):
+        async with session_manager.run():
+            yield
+
+    return Starlette(
+        routes=[
+            Route("/health", health),
+            Route("/mcp", _MCPEndpoint(), methods=["GET", "POST", "DELETE"]),
+        ],
+        lifespan=lifespan,
+    )
+
+
+def _serve_http(host: str, port: int) -> None:
+    """Run the MCP server over streamable HTTP at http://host:port/mcp."""
+    import uvicorn
+
+    _warn_if_dry_run()
+    token = cfg.mcp_auth_token
+    if not token and host not in _LOOPBACK_HOSTS:
+        log.warning(
+            "MCP_AUTH_TOKEN is not set and the server is bound to %s — anyone who can "
+            "reach this address can query your database and Pinecone index. Set "
+            "MCP_AUTH_TOKEN, or put the server behind an authenticating proxy.",
+            host,
+        )
+    log.info("fpl-context-mcp server started (http transport) on http://%s:%d/mcp", host, port)
+    uvicorn.run(build_http_app(token), host=host, port=port, log_level="info")
+
+
+def _parse_args(argv: list[str]):
+    import argparse
+    import os
+
+    parser = argparse.ArgumentParser(
+        prog="fpl-context-mcp",
+        description="FPL stats and press-coverage MCP server.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="validate configuration and test connectivity, then exit",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default=os.getenv("MCP_TRANSPORT", "stdio"),
+        help="stdio (default; launched by a local MCP client) or http (streamable "
+        "HTTP at /mcp, for remote clients such as ChatGPT connectors)",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.getenv("MCP_HOST", "127.0.0.1"),
+        help="HTTP bind address (default 127.0.0.1; use 0.0.0.0 when hosting)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("MCP_PORT") or os.getenv("PORT") or 8000),
+        help="HTTP port (default 8000, or $MCP_PORT / $PORT)",
+    )
+    return parser.parse_args(argv)
+
+
 def main() -> None:
-    """Entry point — run the MCP server synchronously via asyncio.
+    """Entry point — run the MCP server over stdio (default) or HTTP.
 
     Pass --check to validate configuration and test connectivity without
     starting the MCP server.
     """
-    if "--check" in sys.argv:
+    args = _parse_args(sys.argv[1:])
+    if args.check:
         check_config()
+        return
+    if args.transport == "http":
+        _serve_http(args.host, args.port)
         return
     asyncio.run(_serve())
 
