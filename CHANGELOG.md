@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-25
+
+### Fixed
+
+- **Match results froze after the first run.** `ingest_match_data` only wrote
+  fixtures newer than `MAX(kickoff_time)`, but the first run stores all 380
+  fixtures including future ones, so the boundary became the last day of the
+  season and every later run wrote 0 fixtures — scores, `finished` flags and
+  per-player stats never updated. All fixtures are now upserted every run, and
+  the delta applies to player stats instead: they are fetched only for finished
+  fixtures that have none yet or were played in the last 2 days (FPL revises
+  bonus points after full time). Each player's `element-summary` is fetched once
+  (8 concurrent requests) and rows are written with one batched upsert, so a first
+  seed makes far fewer requests. The job no longer needs the read-only connection.
+- **`gameweeks` is now populated** (deadlines, current/next/finished flags,
+  average and highest scores) from bootstrap-static on every run; previously the
+  table was advertised but never written.
+
+### Added
+
+- **`fpl-context-backfill-history`** (`jobs/backfill_history.py`) — one-time job that
+  loads past-season player totals (about 20 seasons) from FPL's `history_past`, plus
+  a manual `backfill_history.yml` workflow. Past-season rows have a NULL
+  `team_fpl_id`; only players in the current FPL list are covered (FPL serves no
+  past fixtures, teams or per-match stats).
+
+### Changed
+
+- **Removed the `player_xpts` view** from `db/schema.sql`, the tool description and
+  the docs. It was a Gaffer-specific projection that nothing here computes, so it
+  could only ever hold placeholder values. Existing databases can drop it with
+  `DROP MATERIALIZED VIEW IF EXISTS player_xpts;`.
+- `players.team_fpl_id` is nullable in `db/schema.sql`. Existing databases:
+  `ALTER TABLE players ALTER COLUMN team_fpl_id DROP NOT NULL;` (the backfill tries
+  this itself when run as the table owner).
+- README documents what each run updates and how fresh the data is, and the tool
+  description now states that past seasons are totals-only and current-list-only.
+
 ## [0.4.0] — 2026-09-25
 
 ### Changed

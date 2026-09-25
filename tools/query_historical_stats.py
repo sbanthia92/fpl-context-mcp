@@ -46,7 +46,8 @@ _STATEMENT_TIMEOUT_MS = 10_000
 # knows what tables and columns are available without needing a separate schema
 # lookup call.
 SCHEMA_DESCRIPTION = """
-Available tables (read-only; hold the seasons ingested so far, including the current one):
+Available tables (read-only). The current season is fully populated; past seasons
+exist only as season totals in `players` (see notes below the table list):
 
   seasons        — id, label (e.g. '2025/26'), start_year, is_current
   teams          — season_id, fpl_id, name, short_name, strength,
@@ -64,10 +65,17 @@ Available tables (read-only; hold the seasons ingested so far, including the cur
                     opponent_team_fpl_id, was_home, minutes, goals_scored,
                     assists, clean_sheets, bonus, total_points,
                     expected_goals, expected_assists, ict_index, starts
-  player_xpts    — materialized view: player_fpl_id, web_name, team_name,
-                   position, now_cost, expected_points (next GW projection)
 
-Join hint: teams.fpl_id = players.team_fpl_id (within the same season_id).
+Notes:
+  - teams, fixtures, gameweeks and gw_player_stats hold the CURRENT season only.
+  - For past seasons, `players` has one row per player per season with season totals
+    (points, minutes, goals, assists, clean sheets, cards, bonus). team_fpl_id is NULL
+    there, and fpl_id is the player's current FPL id. Join seasons for the label.
+  - Past seasons only include players in the CURRENT FPL player list. Departed players are
+    absent, so league-wide or team-wide totals for past seasons are incomplete; only trust
+    per-player history for players who appear in the current season.
+
+Join hint: teams.fpl_id = players.team_fpl_id (current season, same season_id).
 """
 
 
