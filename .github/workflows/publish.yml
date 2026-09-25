@@ -40,7 +40,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     environment:
       name: pypi
-      url: https://pypi.org/project/sports-context-mcp/
+      url: https://pypi.org/project/fpl-context-mcp/
     permissions:
       # Required for PyPI Trusted Publishing (OIDC) — no API token/secret needed.
       id-token: write

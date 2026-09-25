@@ -1,5 +1,5 @@
 """
-Shared pytest fixtures for sports-context-mcp tests.
+Shared pytest fixtures for fpl-context-mcp tests.
 
 All external calls (HTTP, Pinecone, PostgreSQL) are mocked here so tests
 never hit real APIs or databases.

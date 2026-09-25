@@ -26,10 +26,10 @@ Pinecone upsert pattern:
   - Namespace: "press"
   - Stale articles (>14 days) are deleted on every run
 
-Run from the sports-context-mcp directory:
+Run from the fpl-context-mcp directory:
     python -m jobs.ingest_press_content
 
-Cron (EC2): 0 7,19 * * * cd /path/to/sports-context-mcp && python -m jobs.ingest_press_content
+Cron (EC2): 0 7,19 * * * cd /path/to/fpl-context-mcp && python -m jobs.ingest_press_content
 """
 
 import hashlib
@@ -210,7 +210,7 @@ class _BaseFetcher(ABC):
             requests.RequestException: On network or HTTP errors.
         """
         kwargs.setdefault("timeout", 15)
-        kwargs.setdefault("headers", {"User-Agent": "sports-context-mcp/0.1"})
+        kwargs.setdefault("headers", {"User-Agent": "fpl-context-mcp/0.1"})
         return requests.get(url, **kwargs)
 
     def _build_press_doc(

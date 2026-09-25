@@ -1,10 +1,23 @@
 # Changelog
 
-All notable changes to sports-context-mcp will be documented in this file.
+All notable changes to fpl-context-mcp (formerly sports-context-mcp) will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+
+## [0.4.0] — 2026-09-25
+
+### Changed
+
+- **Renamed `sports-context-mcp` to `fpl-context-mcp`** before the first PyPI
+  release. The GitHub repo, PyPI package and CLI commands now all say "fpl":
+  `fpl-context-mcp` (server), `fpl-context-ingest-press` and
+  `fpl-context-ingest-match` (jobs). The MCP server is registered as
+  `fpl-context` in the README's Claude Desktop config. Tool names
+  (`query_historical_stats`, `query_press_conferences`) and Python module names
+  are unchanged. GitHub redirects the old repo URL. Entries below refer to the
+  project by its old name.
 
 ## [0.3.1] — 2026-09-25
 
