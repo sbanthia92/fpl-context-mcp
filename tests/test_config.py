@@ -42,17 +42,17 @@ def test_database_etl_url_takes_precedence(monkeypatch):
     assert c.database_etl_url == "postgresql://etl:y@localhost/db"
 
 
-def test_guardian_api_key_defaults_to_test(monkeypatch):
-    """GUARDIAN_API_KEY defaults to 'test' (the public open key)."""
+def test_guardian_api_key_defaults_to_empty(monkeypatch):
+    """GUARDIAN_API_KEY is empty when unset (the public 'test' key now gets a 401)."""
     monkeypatch.delenv("GUARDIAN_API_KEY", raising=False)
     c = _Config()
-    assert c.guardian_api_key == "test"
+    assert c.guardian_api_key == ""
 
 
-def test_empty_guardian_key_falls_back_to_test(monkeypatch):
-    """An empty GUARDIAN_API_KEY (e.g. an unset GitHub Actions secret) means 'test'."""
-    monkeypatch.setenv("GUARDIAN_API_KEY", "")
-    assert _Config().guardian_api_key == "test"
+def test_registered_guardian_key_is_returned(monkeypatch):
+    """A configured GUARDIAN_API_KEY is passed through unchanged."""
+    monkeypatch.setenv("GUARDIAN_API_KEY", "my-real-key")
+    assert _Config().guardian_api_key == "my-real-key"
 
 
 def test_empty_pinecone_index_name_falls_back_to_default(monkeypatch):

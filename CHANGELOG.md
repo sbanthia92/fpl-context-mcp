@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-09-25
+
+### Fixed
+
+- **Guardian `test` key no longer works.** The Guardian API now answers the
+  public `test` key with HTTP 401, so the old default silently produced zero
+  Guardian articles. `GUARDIAN_API_KEY` now defaults to empty; without a key the
+  Guardian fetcher logs a clear warning and is skipped (BBC Sport still
+  ingests), and `--check` says so. README, `.env.example` and `CLAUDE.md`
+  updated — register a free key at open-platform.theguardian.com.
+- **The Guardian fetcher no longer logs the API key** at INFO level.
+- **Outdated injury news is now removed.** Player-news docs used a
+  hash-of-text ID and were exempt from cleanup, so a changed or cleared injury
+  left the old doc in Pinecone forever. Each player now has one doc with a
+  stable ID that is overwritten every run, stamped with `refreshed_at`; after a
+  successful run, player-news docs that were not refreshed (news cleared by FPL,
+  or written by an older version) are deleted. Cleanup is skipped if the FPL
+  fetch returned nothing, so an API outage cannot wipe injury data. The first
+  run after upgrading removes all old-format player-news docs once (current
+  injuries are recreated in the same run).
+- **Two Guardian tests no longer fail by date.** They hardcoded an article date
+  that aged past the fetcher's 14-day window; they now use the current time.
+
 ## [0.3.0] — 2026-09-24
 
 ### Added

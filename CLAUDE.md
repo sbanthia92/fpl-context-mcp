@@ -86,7 +86,7 @@ loaded automatically by `config.py` when `python-dotenv` is installed.
 | `PINECONE_INDEX_NAME` | No     | `the-gaffer` | Pinecone index name |
 | `DATABASE_URL`      | Yes*     | —            | Read-only PostgreSQL DSN (`gaffer_readonly` user) |
 | `DATABASE_ETL_URL`  | Yes*     | —            | Read/write PostgreSQL DSN (`gaffer_etl` user). Falls back to `DATABASE_URL`. |
-| `GUARDIAN_API_KEY`  | No       | `test`       | Guardian open platform key. Register at open-platform.theguardian.com for full body text. |
+| `GUARDIAN_API_KEY`  | No       | (empty)      | Guardian open platform key. Register free at open-platform.theguardian.com. Without it the Guardian source is skipped (BBC only). |
 
 *Required for the respective tool/job to function; the package will start without them
 and log an error on first use.
@@ -124,7 +124,9 @@ Gaffer's `server/rag.py`.
 ### `ingest_press_content`
 - Thread 1: BBC Sport PL RSS → press articles
 - Thread 2: Guardian API (`content.guardianapis.com`) → press articles
-- Sequential after threads: FPL bootstrap → player injury/availability docs
+- Sequential after threads: FPL bootstrap → player injury/availability docs (one doc per
+  player, stable ID, overwritten every run; docs for players whose news FPL has cleared are
+  deleted after each successful run — skipped if the FPL fetch returned nothing)
 - Embeds with `multilingual-e5-large`, batch 96, upserts to `press` namespace
 - Deletes articles older than 14 days on every run
 
@@ -151,6 +153,7 @@ Documents upserted to the `press` namespace carry this metadata:
     "date": str,           # RFC 2822 or ISO 8601
     "pub_timestamp": float, # Unix timestamp — used for stale-doc deletion
     "recency_score": float, # 1.0 (today) → 0.1 (14 days) — used for re-ranking
+    "refreshed_at": float,  # player_news only — run timestamp, used to prune cleared news
     "url": str,            # press_article only
 }
 ```
@@ -173,8 +176,8 @@ Documents upserted to the `press` namespace carry this metadata:
 - `docs:` — documentation only
 
 ## Known gotchas
-- **Guardian `test` API key**: does not return `bodyText` — only `trailText` (summary).
-  Register for a free production key to get full article text.
+- **Guardian API key required**: the public `test` key now returns HTTP 401, so the Guardian
+  fetcher is skipped unless `GUARDIAN_API_KEY` is a registered key (free). BBC still ingests.
 - **Pinecone inference rate limits**: the 8-second sleep between embed batches in `_upsert`
   exists to avoid HTTP 429s on the free inference tier. Remove or reduce it on paid tiers.
 - **Thread 3 ordering**: `concurrent.futures.wait([f1])` is the only enforcement that

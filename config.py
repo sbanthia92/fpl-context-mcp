@@ -69,9 +69,11 @@ class _Config:
         """
         The Guardian open platform API key.
         Register for free at https://open-platform.theguardian.com/access/.
-        Defaults to 'test' (the public open key — lower rate limit, no full body text).
+        Empty by default: the Guardian API rejects the old public 'test' key (HTTP 401),
+        so without a registered key the Guardian source is skipped and only BBC Sport
+        articles are ingested.
         """
-        return os.getenv("GUARDIAN_API_KEY") or "test"
+        return os.getenv("GUARDIAN_API_KEY", "")
 
     @property
     def dry_run(self) -> bool:

@@ -5,6 +5,7 @@ All HTTP and Pinecone calls are mocked. Tests cover fetcher logic, document
 building, deduplication, and the threaded orchestration path.
 """
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,9 +14,11 @@ import requests
 from jobs.ingest_press_content import (
     BBCSportFetcher,
     GuardianAPIFetcher,
+    _cleanup_stale_player_news,
     _days_ago,
     _doc_id,
     _existing_ids,
+    _fetch_player_news_docs,
     _recency_score,
     _upsert,
     main,
@@ -207,7 +210,8 @@ def _make_guardian_response(articles: list[dict]) -> dict:
         results.append(
             {
                 "webTitle": a.get("title", "Default Title"),
-                "webPublicationDate": a.get("date", "2026-05-10T10:00:00Z"),
+                # Default to "now": the fetcher drops articles older than 14 days.
+                "webPublicationDate": a.get("date", datetime.now(UTC).isoformat()),
                 "webUrl": a.get("url", "https://theguardian.com/1"),
                 "fields": {
                     "headline": a.get("title", "Default Title"),
@@ -463,3 +467,161 @@ def test_main_exits_nonzero_when_pinecone_key_missing(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         main()
     assert exc.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# Guardian key handling
+# ---------------------------------------------------------------------------
+
+
+def test_guardian_fetcher_skips_without_key(monkeypatch):
+    """No GUARDIAN_API_KEY -> no HTTP call, empty result (the 'test' key is rejected)."""
+    monkeypatch.setenv("GUARDIAN_API_KEY", "")
+    with patch("jobs.ingest_press_content.requests.get") as mock_get:
+        docs = GuardianAPIFetcher().fetch()
+
+    assert docs == []
+    mock_get.assert_not_called()
+
+
+def test_guardian_fetcher_does_not_log_api_key(monkeypatch, caplog):
+    """The API key must never appear in log output."""
+    monkeypatch.setenv("GUARDIAN_API_KEY", "super-secret-key-123")
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = _make_guardian_response([])
+    mock_resp.raise_for_status = MagicMock()
+
+    with (
+        caplog.at_level("DEBUG"),
+        patch("jobs.ingest_press_content.requests.get", return_value=mock_resp),
+    ):
+        GuardianAPIFetcher().fetch()
+
+    assert "super-secret-key-123" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Player news: stable IDs and stale cleanup
+# ---------------------------------------------------------------------------
+
+
+def _fpl_bootstrap(news_by_player: dict[int, str]) -> dict:
+    return {
+        "teams": [{"id": 1, "name": "Arsenal"}],
+        "elements": [
+            {
+                "id": pid,
+                "first_name": "First",
+                "second_name": f"Player{pid}",
+                "team": 1,
+                "element_type": 3,
+                "news": news,
+                "news_added": "2026-04-10T14:30:09Z",
+                "chance_of_playing_next_round": 50,
+            }
+            for pid, news in news_by_player.items()
+        ],
+    }
+
+
+def _bootstrap_response(payload: dict) -> MagicMock:
+    resp = MagicMock()
+    resp.json.return_value = payload
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+def test_player_news_id_is_stable_when_news_changes():
+    """A player's doc keeps the same ID when their news text changes, so it overwrites."""
+    with patch(
+        "jobs.ingest_press_content.requests.get",
+        return_value=_bootstrap_response(_fpl_bootstrap({7: "Knee injury"})),
+    ):
+        first = _fetch_player_news_docs(100.0)
+    with patch(
+        "jobs.ingest_press_content.requests.get",
+        return_value=_bootstrap_response(_fpl_bootstrap({7: "Hamstring injury"})),
+    ):
+        second = _fetch_player_news_docs(200.0)
+
+    assert first[0][0] == second[0][0]
+    assert "Knee" in first[0][1] and "Hamstring" in second[0][1]
+
+
+def test_player_news_docs_carry_refreshed_at_and_skip_players_without_news():
+    """Docs are stamped with the run time; players with empty news get no doc."""
+    payload = _fpl_bootstrap({1: "Ankle knock", 2: ""})
+    with patch("jobs.ingest_press_content.requests.get", return_value=_bootstrap_response(payload)):
+        docs = _fetch_player_news_docs(123.0)
+
+    assert len(docs) == 1
+    assert docs[0][2]["refreshed_at"] == 123.0
+    assert docs[0][2]["type"] == "player_news"
+
+
+def _match(doc_id: str, refreshed_at: float | None) -> MagicMock:
+    m = MagicMock()
+    m.id = doc_id
+    m.metadata = {} if refreshed_at is None else {"refreshed_at": refreshed_at}
+    return m
+
+
+def test_cleanup_stale_player_news_deletes_only_unrefreshed():
+    """Docs older than the run (or lacking refreshed_at) are deleted; fresh ones kept."""
+    index = MagicMock()
+    index.query.return_value.matches = [
+        _match("fresh", 500.0),
+        _match("stale", 100.0),
+        _match("legacy_no_field", None),
+    ]
+
+    deleted = _cleanup_stale_player_news(index, run_started=400.0)
+
+    assert deleted == 2
+    index.delete.assert_called_once()
+    assert sorted(index.delete.call_args.kwargs["ids"]) == ["legacy_no_field", "stale"]
+    assert index.query.call_args.kwargs["filter"] == {"type": {"$eq": "player_news"}}
+
+
+def test_cleanup_stale_player_news_is_best_effort():
+    """A Pinecone error is swallowed (logged), not raised."""
+    index = MagicMock()
+    index.query.side_effect = RuntimeError("pinecone down")
+
+    assert _cleanup_stale_player_news(index, run_started=1.0) == 0
+    index.delete.assert_not_called()
+
+
+def test_run_prunes_player_news_after_upsert():
+    """run() overwrites current player news, then prunes docs it did not refresh."""
+    news_doc = ("p1", "news", {"text": "news", "type": "player_news", "refreshed_at": 1.0})
+
+    with (
+        patch("jobs.ingest_press_content.Pinecone"),
+        patch.object(BBCSportFetcher, "fetch", return_value=[]),
+        patch.object(GuardianAPIFetcher, "fetch", return_value=[]),
+        patch("jobs.ingest_press_content._fetch_player_news_docs", return_value=[news_doc]),
+        patch("jobs.ingest_press_content._upsert", return_value=1) as mock_upsert,
+        patch("jobs.ingest_press_content._cleanup_stale_press"),
+        patch("jobs.ingest_press_content._cleanup_stale_player_news") as mock_prune,
+    ):
+        assert run() is True
+
+    assert mock_upsert.call_args.kwargs["always_upsert"] is True
+    mock_prune.assert_called_once()
+
+
+def test_run_skips_player_news_prune_when_fetch_empty():
+    """An empty player-news fetch (API outage) must not wipe existing docs."""
+    with (
+        patch("jobs.ingest_press_content.Pinecone"),
+        patch.object(BBCSportFetcher, "fetch", return_value=[]),
+        patch.object(GuardianAPIFetcher, "fetch", return_value=[]),
+        patch("jobs.ingest_press_content._fetch_player_news_docs", return_value=[]),
+        patch("jobs.ingest_press_content._upsert", return_value=0),
+        patch("jobs.ingest_press_content._cleanup_stale_press"),
+        patch("jobs.ingest_press_content._cleanup_stale_player_news") as mock_prune,
+    ):
+        run()
+
+    mock_prune.assert_not_called()

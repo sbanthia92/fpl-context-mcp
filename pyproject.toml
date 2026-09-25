@@ -1,6 +1,6 @@
 [project]
 name = "sports-context-mcp"
-version = "0.3.0"
+version = "0.3.1"
 description = "Standalone MCP server exposing sports stats and press-conference RAG as MCP tools, with threaded ingestion jobs for PostgreSQL and Pinecone."
 readme = "README.md"
 license = "MIT"
