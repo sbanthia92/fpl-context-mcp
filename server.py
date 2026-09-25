@@ -143,7 +143,7 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Execute a read-only SQL SELECT against the Gaffer historical sports "
                 "database. Use this to answer questions about player stats, fixtures, "
-                "team strength, or gameweek history across multiple Premier League seasons.\n\n"
+                "team strength, or gameweek history for the seasons in the database.\n\n"
                 + SCHEMA_DESCRIPTION
             ),
             inputSchema={

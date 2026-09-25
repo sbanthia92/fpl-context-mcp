@@ -5,9 +5,13 @@
 -- people provisioning a fresh PostgreSQL database to use with
 -- query_historical_stats and jobs/ingest_match_data.py.
 --
--- Column set mirrors tools/query_historical_stats.py's SCHEMA_DESCRIPTION and
--- README.md's "Database schema" section. Adjust types/constraints to taste —
--- this is a starting point, not a migration tool.
+-- Columns and conflict keys match the INSERT ... ON CONFLICT statements in
+-- jobs/ingest_match_data.py, so the job can write to these tables as-is.
+-- Adjust types/constraints to taste — this is a starting point, not a
+-- migration tool.
+--
+-- Note: ingest_match_data loads the CURRENT season only (the FPL API does not
+-- serve past seasons), and it does not write the gameweeks table.
 
 CREATE TABLE IF NOT EXISTS seasons (
     id         SERIAL PRIMARY KEY,
@@ -42,25 +46,39 @@ CREATE TABLE IF NOT EXISTS gameweeks (
 );
 
 CREATE TABLE IF NOT EXISTS players (
-    season_id         INTEGER NOT NULL REFERENCES seasons(id),
-    fpl_id            INTEGER NOT NULL,
-    team_fpl_id       INTEGER NOT NULL,
-    first_name        TEXT,
-    second_name       TEXT,
-    web_name          TEXT NOT NULL,
-    position          TEXT NOT NULL CHECK (position IN ('GKP', 'DEF', 'MID', 'FWD')),
-    now_cost          INTEGER,
-    form              NUMERIC,
-    total_points      INTEGER DEFAULT 0,
-    minutes           INTEGER DEFAULT 0,
-    goals_scored      INTEGER DEFAULT 0,
-    assists           INTEGER DEFAULT 0,
-    clean_sheets      INTEGER DEFAULT 0,
-    expected_goals    NUMERIC,
-    expected_assists  NUMERIC,
-    ict_index         NUMERIC,
-    status            TEXT,
-    news              TEXT,
+    season_id                     INTEGER NOT NULL REFERENCES seasons(id),
+    fpl_id                        INTEGER NOT NULL,
+    team_fpl_id                   INTEGER NOT NULL,
+    first_name                    TEXT,
+    second_name                   TEXT,
+    web_name                      TEXT NOT NULL,
+    position                      TEXT NOT NULL CHECK (position IN ('GKP', 'DEF', 'MID', 'FWD')),
+    now_cost                      INTEGER,
+    total_points                  INTEGER DEFAULT 0,
+    minutes                       INTEGER DEFAULT 0,
+    goals_scored                  INTEGER DEFAULT 0,
+    assists                       INTEGER DEFAULT 0,
+    clean_sheets                  INTEGER DEFAULT 0,
+    goals_conceded                INTEGER DEFAULT 0,
+    yellow_cards                  INTEGER DEFAULT 0,
+    red_cards                     INTEGER DEFAULT 0,
+    bonus                         INTEGER DEFAULT 0,
+    form                          NUMERIC,
+    points_per_game               NUMERIC,
+    selected_by_percent           NUMERIC,
+    transfers_in_event            INTEGER,
+    transfers_out_event           INTEGER,
+    status                        TEXT,
+    chance_of_playing_next_round  INTEGER,
+    news                          TEXT,
+    creativity                    NUMERIC,
+    influence                     NUMERIC,
+    threat                        NUMERIC,
+    ict_index                     NUMERIC,
+    expected_goals                NUMERIC,
+    expected_assists              NUMERIC,
+    expected_goal_involvements    NUMERIC,
+    updated_at                    TIMESTAMPTZ,
     PRIMARY KEY (season_id, fpl_id),
     FOREIGN KEY (season_id, team_fpl_id) REFERENCES teams(season_id, fpl_id)
 );
@@ -75,6 +93,7 @@ CREATE TABLE IF NOT EXISTS fixtures (
     home_score            INTEGER,
     away_score            INTEGER,
     finished              BOOLEAN NOT NULL DEFAULT FALSE,
+    started               BOOLEAN NOT NULL DEFAULT FALSE,
     home_team_difficulty  INTEGER,
     away_team_difficulty  INTEGER,
     PRIMARY KEY (season_id, fpl_id)
@@ -83,23 +102,44 @@ CREATE TABLE IF NOT EXISTS fixtures (
 CREATE INDEX IF NOT EXISTS idx_fixtures_kickoff_time ON fixtures (kickoff_time);
 
 CREATE TABLE IF NOT EXISTS gw_player_stats (
-    season_id             INTEGER NOT NULL REFERENCES seasons(id),
-    player_fpl_id         INTEGER NOT NULL,
-    gw_number             INTEGER NOT NULL,
-    fixture_fpl_id        INTEGER,
-    opponent_team_fpl_id  INTEGER,
-    was_home              BOOLEAN,
-    minutes               INTEGER DEFAULT 0,
-    goals_scored          INTEGER DEFAULT 0,
-    assists               INTEGER DEFAULT 0,
-    clean_sheets          INTEGER DEFAULT 0,
-    bonus                 INTEGER DEFAULT 0,
-    total_points          INTEGER DEFAULT 0,
-    expected_goals        NUMERIC,
-    expected_assists      NUMERIC,
-    ict_index             NUMERIC,
-    starts                INTEGER DEFAULT 0,
-    PRIMARY KEY (season_id, player_fpl_id, gw_number),
+    season_id                   INTEGER NOT NULL REFERENCES seasons(id),
+    player_fpl_id               INTEGER NOT NULL,
+    gw_number                   INTEGER NOT NULL,
+    fixture_fpl_id              INTEGER NOT NULL,
+    opponent_team_fpl_id        INTEGER,
+    was_home                    BOOLEAN,
+    team_h_score                INTEGER,
+    team_a_score                INTEGER,
+    minutes                     INTEGER DEFAULT 0,
+    goals_scored                INTEGER DEFAULT 0,
+    assists                     INTEGER DEFAULT 0,
+    clean_sheets                INTEGER DEFAULT 0,
+    goals_conceded              INTEGER DEFAULT 0,
+    own_goals                   INTEGER DEFAULT 0,
+    penalties_saved             INTEGER DEFAULT 0,
+    penalties_missed            INTEGER DEFAULT 0,
+    yellow_cards                INTEGER DEFAULT 0,
+    red_cards                   INTEGER DEFAULT 0,
+    saves                       INTEGER DEFAULT 0,
+    bonus                       INTEGER DEFAULT 0,
+    bps                         INTEGER DEFAULT 0,
+    total_points                INTEGER DEFAULT 0,
+    value                       INTEGER,
+    selected                    INTEGER,
+    transfers_in                INTEGER,
+    transfers_out               INTEGER,
+    transfers_balance           INTEGER,
+    influence                   NUMERIC,
+    creativity                  NUMERIC,
+    threat                      NUMERIC,
+    ict_index                   NUMERIC,
+    expected_goals              NUMERIC,
+    expected_assists            NUMERIC,
+    expected_goal_involvements  NUMERIC,
+    expected_goals_conceded     NUMERIC,
+    starts                      INTEGER,
+    -- One row per player per fixture (a double gameweek has two fixtures).
+    PRIMARY KEY (season_id, player_fpl_id, fixture_fpl_id),
     FOREIGN KEY (season_id, player_fpl_id) REFERENCES players(season_id, fpl_id)
 );
 

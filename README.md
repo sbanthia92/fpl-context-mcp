@@ -4,7 +4,7 @@ An [MCP](https://modelcontextprotocol.io) server that gives Claude (or any MCP c
 
 | Tool | What it does |
 |---|---|
-| `query_historical_stats` | Runs a read-only SQL SELECT against a PostgreSQL database with 3+ seasons of PL stats |
+| `query_historical_stats` | Runs a read-only SQL SELECT against a PostgreSQL database of FPL player, fixture and gameweek stats (whatever seasons you've ingested) |
 | `query_press_conferences` | Semantic search over BBC Sport and The Guardian press-conference summaries and injury updates stored in Pinecone |
 
 Two ingestion jobs keep that data populated and current:
@@ -175,7 +175,7 @@ Run both **once, right after configuring your `.env`**, before registering the s
 - `query_press_conferences` will return a message telling you the namespace is unseeded, instead of any article content.
 - `query_historical_stats` will return `Query returned no results.` for any query, since the tables are empty.
 
-`ingest_match_data` populates 3+ seasons of history on first run (it writes everything, since there's no prior `MAX(kickoff_time)` to delta against). `ingest_press_content` only pulls currently-live articles (BBC/Guardian don't offer deep history), so the press index will be thin until it's had a few days of scheduled runs — that's expected, not a bug.
+`ingest_match_data` loads the **current season** on first run — every team, player and fixture, plus per-player stats for matches already played (the first run can take a while mid-season, since it fetches stats one player at a time). The FPL API only serves the current season, so past seasons aren't backfilled: history builds up over time as you keep the job running, or you can load older seasons into the same tables yourself. The `gameweeks` table is not written by this job, so it stays empty unless you fill it. `ingest_press_content` only pulls currently-live articles (BBC/Guardian don't offer deep history), so the press index will be thin until it's had a few days of scheduled runs — that's expected, not a bug.
 
 ---
 
@@ -382,7 +382,7 @@ Executes a read-only SQL `SELECT` against the historical stats database.
 **Example prompts**
 
 - *"Who are the top 10 midfielders by total points this season?"*
-- *"How many goals has Salah scored across the last three seasons?"*
+- *"How many goals has Salah scored this season?"*
 - *"Which teams have the best defensive record at home in 2024/25?"*
 
 **Safety**

@@ -36,6 +36,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`db/schema.sql` now matches `jobs/ingest_match_data.py`.** The first draft
+  was missing about 40 columns the job writes (e.g. `fixtures.started`, most of
+  `players` and `gw_player_stats`) and keyed `gw_player_stats` on
+  `(season_id, player_fpl_id, gw_number)`, which made the job's
+  `ON CONFLICT (season_id, player_fpl_id, fixture_fpl_id)` fail.
+- **Docs no longer promise "3+ seasons" of history.** The job only loads the
+  current season (the FPL API serves nothing older) and does not write the
+  `gameweeks` table; README, tool descriptions and schema notes now say so.
+
 - **Ingestion jobs now fail loudly.** `ingest_press_content` and
   `ingest_match_data` previously logged an error and exited 0 when credentials
   were missing or the FPL fetch/DB write failed, so scheduled runs showed green
