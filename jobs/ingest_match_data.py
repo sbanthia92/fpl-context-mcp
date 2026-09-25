@@ -1,15 +1,15 @@
 """
 Ingestion job: match and player data → PostgreSQL.
 
-Fetches Premier League match and player data from the FPL API, then performs a
-delta write to PostgreSQL using only the data that has arrived since the last
-recorded entry. Thread coordination is enforced via concurrent.futures.wait()
-so Thread 3 (the writer) never starts until the fetch thread has finished.
+Fetches current-season Premier League data from the FPL API and writes it to
+PostgreSQL. Thread coordination is enforced via concurrent.futures.wait() so
+Thread 3 (the writer) never starts until the fetch thread has finished.
 
 Threads:
   Thread 1 — FPL API: bootstrap-static (players, teams, gameweeks) + /fixtures/
-  Thread 3 — Delta write: find last kickoff_time in PostgreSQL, upsert only
-             newer fixtures and their player stats to the existing schema
+  Thread 3 — Write: upsert season/teams/gameweeks/players and ALL fixtures, then
+             fetch per-player match stats only for finished fixtures that don't
+             have them yet (or were played in the last couple of days)
 
 Thread 3 starts only after Thread 1 completes. If the fetch thread fails, its
 result is treated as None and the delta write is skipped.
@@ -47,6 +47,23 @@ _POSITION_MAP = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
 
 # psycopg2 connection options
 _CONNECT_TIMEOUT = 10  # seconds
+
+# Finished fixtures kicked off within this many days get their player stats re-fetched,
+# because FPL revises bonus points and stats shortly after full time.
+_STATS_REFRESH_DAYS = 2
+_STATS_WORKERS = 8  # concurrent element-summary requests
+
+_STATS_COLUMNS = [
+    "season_id", "player_fpl_id", "gw_number", "fixture_fpl_id",
+    "opponent_team_fpl_id", "was_home", "team_h_score", "team_a_score",
+    "minutes", "goals_scored", "assists", "clean_sheets",
+    "goals_conceded", "own_goals", "penalties_saved", "penalties_missed",
+    "yellow_cards", "red_cards", "saves", "bonus", "bps", "total_points",
+    "value", "selected", "transfers_in", "transfers_out", "transfers_balance",
+    "influence", "creativity", "threat", "ict_index",
+    "expected_goals", "expected_assists", "expected_goal_involvements",
+    "expected_goals_conceded", "starts",
+]  # fmt: skip
 
 
 # ---------------------------------------------------------------------------
@@ -118,56 +135,26 @@ def fetch_fpl_data() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _get_db_conn(etl: bool = False) -> psycopg2.extensions.connection:
+def _get_db_conn() -> psycopg2.extensions.connection:
     """
-    Open and return a synchronous psycopg2 connection.
+    Open and return a synchronous read/write psycopg2 connection.
 
-    Args:
-        etl: If True, use the read/write ETL connection string. Otherwise use
-             the read-only connection string (for the delta timestamp query).
+    Uses DATABASE_ETL_URL (falling back to DATABASE_URL).
 
     Returns:
         psycopg2 connection object with autocommit disabled.
 
     Raises:
-        RuntimeError: If the required environment variable is not set.
+        RuntimeError: If no database URL is configured.
     """
-    url = cfg.database_etl_url if etl else cfg.database_url
+    url = cfg.database_etl_url
     if not url:
         raise RuntimeError(
             "DATABASE_ETL_URL (or DATABASE_URL) must be set to run ingest_match_data."
         )
-    # psycopg2 accepts standard PostgreSQL DSNs (postgresql://user:pass@host/db).
     conn = psycopg2.connect(url, connect_timeout=_CONNECT_TIMEOUT)
     conn.autocommit = False
     return conn
-
-
-def _get_last_kickoff(conn: psycopg2.extensions.connection) -> datetime | None:
-    """
-    Query PostgreSQL for the latest fixture kickoff_time in the current season.
-
-    This timestamp is used as the delta boundary — only fixtures newer than this
-    are fetched and written during the current run.
-
-    Args:
-        conn: Open psycopg2 connection (read-only is fine).
-
-    Returns:
-        The most recent kickoff_time as a timezone-aware datetime, or None if the
-        fixtures table is empty for the current season.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT MAX(f.kickoff_time)
-            FROM fixtures f
-            JOIN seasons s ON f.season_id = s.id
-            WHERE s.is_current = TRUE
-            """
-        )
-        row = cur.fetchone()
-    return row[0] if row and row[0] else None
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -267,6 +254,48 @@ def _upsert_teams(cur, season_id: int, bootstrap: dict) -> None:
             ),
         )
     log.info("[Thread-Write] upserted %d teams.", len(teams))
+
+
+def _upsert_gameweeks(cur, season_id: int, bootstrap: dict) -> None:
+    """
+    Upsert every gameweek from the FPL bootstrap-static ``events`` list.
+
+    Refreshed on every run so is_current / is_next / is_finished and the average
+    and highest scores stay accurate as the season progresses.
+
+    Args:
+        cur:       psycopg2 cursor.
+        season_id: Current season primary key.
+        bootstrap: FPL bootstrap-static JSON response.
+    """
+    events = bootstrap.get("events", [])
+    for e in events:
+        cur.execute(
+            """
+            INSERT INTO gameweeks (
+                season_id, gw_number, deadline_time, is_current, is_next,
+                is_finished, average_entry_score, highest_score
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (season_id, gw_number) DO UPDATE SET
+                deadline_time = EXCLUDED.deadline_time,
+                is_current = EXCLUDED.is_current,
+                is_next = EXCLUDED.is_next,
+                is_finished = EXCLUDED.is_finished,
+                average_entry_score = EXCLUDED.average_entry_score,
+                highest_score = EXCLUDED.highest_score
+            """,
+            (
+                season_id,
+                e["id"],
+                _parse_dt(e.get("deadline_time")),
+                bool(e.get("is_current")),
+                bool(e.get("is_next")),
+                bool(e.get("finished")),
+                e.get("average_entry_score"),
+                e.get("highest_score"),
+            ),
+        )
+    log.info("[Thread-Write] upserted %d gameweeks.", len(events))
 
 
 def _upsert_players(cur, season_id: int, bootstrap: dict) -> None:
@@ -370,45 +399,30 @@ def _upsert_players(cur, season_id: int, bootstrap: dict) -> None:
     log.info("[Thread-Write] upserted %d players.", len(players))
 
 
-def _upsert_new_fixtures(
-    cur,
-    season_id: int,
-    fixtures: list[dict],
-    last_kickoff: datetime | None,
-) -> list[dict]:
+def _upsert_fixtures(cur, season_id: int, fixtures: list[dict]) -> int:
     """
-    Upsert only fixtures whose kickoff_time is newer than last_kickoff.
+    Upsert every fixture in the FPL /fixtures/ response.
 
-    This is the delta: on first run (last_kickoff=None) all fixtures are written;
-    on subsequent runs only newly scheduled or played matches are written.
+    All ~380 fixtures are written on every run (a trivial amount of data), so
+    scores, ``finished`` flags, kickoff changes and postponements are always
+    current. Fixtures without a scheduled kickoff (postponed) are skipped.
 
     Args:
-        cur:          psycopg2 cursor.
-        season_id:    Current season primary key.
-        fixtures:     Full list of fixture dicts from the FPL /fixtures/ endpoint.
-        last_kickoff: The latest kickoff_time already in the database, or None.
+        cur:       psycopg2 cursor.
+        season_id: Current season primary key.
+        fixtures:  Full list of fixture dicts from the FPL /fixtures/ endpoint.
 
     Returns:
-        List of the new fixture dicts that were actually upserted, so callers can
-        decide whether to fetch GW player stats for them.
+        Number of fixtures upserted.
     """
-    new_fixtures = []
+    count = 0
     for f in fixtures:
-        kickoff_str = f.get("kickoff_time")
-        if not kickoff_str:
-            continue  # Skip fixtures without a scheduled kickoff (e.g. postponed)
-
-        kickoff_dt = _parse_dt(kickoff_str)
+        kickoff_dt = _parse_dt(f.get("kickoff_time"))
         if kickoff_dt is None:
-            continue
+            continue  # No scheduled kickoff (e.g. postponed without a new date)
 
-        # Delta filter: skip fixtures we've already recorded.
-        if last_kickoff and kickoff_dt <= last_kickoff:
-            continue
-
-        # Note: FPL API swaps team_h_difficulty and team_a_difficulty — the
-        # difficulty figure is from the *opponent's* perspective, so they need
-        # to be swapped when storing home_team_difficulty and away_team_difficulty.
+        # Note: FPL swaps team_h_difficulty and team_a_difficulty — the figure is from
+        # the *opponent's* perspective, so they are swapped when storing.
         cur.execute(
             """
             INSERT INTO fixtures (
@@ -438,191 +452,185 @@ def _upsert_new_fixtures(
                 f.get("team_a_score"),
                 f.get("finished") or False,
                 f.get("started") or False,
-                # Swap: team_a_difficulty is the difficulty FOR the home team
                 f.get("team_a_difficulty"),
                 f.get("team_h_difficulty"),
             ),
         )
-        new_fixtures.append(f)
-
-    log.info(
-        "[Thread-Write] upserted %d new fixtures (delta from %s).",
-        len(new_fixtures),
-        last_kickoff,
-    )
-    return new_fixtures
+        count += 1
+    log.info("[Thread-Write] upserted %d fixtures.", count)
+    return count
 
 
-def _fetch_and_upsert_player_stats(
-    cur,
-    season_id: int,
-    new_fixtures: list[dict],
-) -> int:
+def _fixtures_needing_stats(cur, season_id: int) -> list[tuple]:
     """
-    For each newly-upserted fixture, fetch per-player GW stats from the FPL API
-    and write them to gw_player_stats.
+    Find finished fixtures whose per-player stats should be (re)fetched.
 
-    Only finished fixtures are processed — in-progress or future fixtures have no
-    stats to collect yet.
+    A fixture qualifies if it is finished and either has no gw_player_stats rows
+    yet, or kicked off within _STATS_REFRESH_DAYS (FPL revises bonus points and
+    stats shortly after full time).
 
     Args:
-        cur:          psycopg2 cursor.
-        season_id:    Current season primary key.
-        new_fixtures: List of fixture dicts returned by _upsert_new_fixtures.
+        cur:       psycopg2 cursor.
+        season_id: Current season primary key.
 
     Returns:
-        Total number of gw_player_stats rows upserted.
+        List of (fixture_fpl_id, gw_number, home_team_fpl_id, away_team_fpl_id).
     """
-    finished = [f for f in new_fixtures if f.get("finished")]
+    cur.execute(
+        """
+        SELECT f.fpl_id, f.gw_number, f.home_team_fpl_id, f.away_team_fpl_id
+        FROM fixtures f
+        WHERE f.season_id = %s
+          AND f.finished
+          AND f.gw_number IS NOT NULL
+          AND (
+                NOT EXISTS (
+                    SELECT 1 FROM gw_player_stats s
+                    WHERE s.season_id = f.season_id AND s.fixture_fpl_id = f.fpl_id
+                )
+                OR f.kickoff_time > NOW() - make_interval(days => %s)
+          )
+        ORDER BY f.gw_number, f.fpl_id
+        """,
+        (season_id, _STATS_REFRESH_DAYS),
+    )
+    return cur.fetchall()
+
+
+def _fetch_player_summary(player_fpl_id: int) -> dict | None:
+    """Fetch one player's element-summary, returning None (and logging) on failure."""
+    try:
+        return _fpl_get(f"/element-summary/{player_fpl_id}/")
+    except Exception as exc:
+        log.warning(
+            "[Thread-Write] failed to fetch element-summary for player %d: %s",
+            player_fpl_id,
+            exc,
+        )
+        return None
+
+
+def _fetch_and_upsert_player_stats(cur, season_id: int, pending: list[tuple]) -> int:
+    """
+    Fetch per-player match stats for the given fixtures and upsert them.
+
+    Each involved player's element-summary is fetched once (concurrently — network
+    only), then every history entry belonging to one of the pending fixtures is
+    written in a single batched upsert. A double-gameweek player therefore costs
+    one request, not one per fixture.
+
+    Args:
+        cur:       psycopg2 cursor.
+        season_id: Current season primary key.
+        pending:   Rows from _fixtures_needing_stats.
+
+    Returns:
+        Number of gw_player_stats rows upserted.
+    """
+    fixture_ids = {row[0] for row in pending}
+    team_ids = {t for row in pending for t in (row[2], row[3])}
     log.info(
-        "[Thread-Write] fetching GW player stats for %d finished fixtures...",
-        len(finished),
+        "[Thread-Write] fetching player stats for %d fixtures (%d teams)...",
+        len(fixture_ids),
+        len(team_ids),
     )
 
-    total_rows = 0
-    for f in finished:
-        gw = f.get("event")
-        if gw is None:
-            continue  # Fixture has no assigned GW (e.g. postponed without reschedule)
+    cur.execute(
+        "SELECT fpl_id FROM players WHERE season_id = %s AND team_fpl_id = ANY(%s)",
+        (season_id, list(team_ids)),
+    )
+    player_ids = [r[0] for r in cur.fetchall()]
 
-        # The FPL element-summary endpoint returns per-player GW history. We collect
-        # only the entry matching this fixture_fpl_id to avoid duplicates.
-        fixture_id = f["id"]
-        home_team_id = f["team_h"]
-        away_team_id = f["team_a"]
+    with ThreadPoolExecutor(max_workers=_STATS_WORKERS, thread_name_prefix="fpl-stats") as pool:
+        summaries = list(zip(player_ids, pool.map(_fetch_player_summary, player_ids), strict=True))
 
-        # Build a mapping of fpl_id → (gw history list) by fetching all involved players.
-        # This is done sequentially within the write thread to keep things simple.
-        for team_id in [home_team_id, away_team_id]:
-            # Get players for this team from the players table (already upserted above).
-            cur.execute(
-                "SELECT fpl_id FROM players WHERE season_id = %s AND team_fpl_id = %s",
-                (season_id, team_id),
+    rows: dict[tuple[int, int], tuple] = {}
+    for player_fpl_id, data in summaries:
+        if not data:
+            continue
+        for g in data.get("history", []):
+            fixture_id = g.get("fixture")
+            if fixture_id not in fixture_ids:
+                continue
+
+            def _gf(key: str, g: dict = g) -> float | None:
+                """Parse a string field to float, returning None if empty."""
+                v = g.get(key)
+                return float(v) if v else None
+
+            rows[(player_fpl_id, fixture_id)] = (
+                season_id,
+                player_fpl_id,
+                g["round"],
+                fixture_id,
+                g["opponent_team"],
+                g["was_home"],
+                g.get("team_h_score"),
+                g.get("team_a_score"),
+                g.get("minutes", 0),
+                g.get("goals_scored", 0),
+                g.get("assists", 0),
+                g.get("clean_sheets", 0),
+                g.get("goals_conceded", 0),
+                g.get("own_goals", 0),
+                g.get("penalties_saved", 0),
+                g.get("penalties_missed", 0),
+                g.get("yellow_cards", 0),
+                g.get("red_cards", 0),
+                g.get("saves", 0),
+                g.get("bonus", 0),
+                g.get("bps", 0),
+                g.get("total_points", 0),
+                g.get("value"),
+                g.get("selected"),
+                g.get("transfers_in"),
+                g.get("transfers_out"),
+                g.get("transfers_balance"),
+                _gf("influence"),
+                _gf("creativity"),
+                _gf("threat"),
+                _gf("ict_index"),
+                _gf("expected_goals"),
+                _gf("expected_assists"),
+                _gf("expected_goal_involvements"),
+                _gf("expected_goals_conceded"),
+                g.get("starts"),
             )
-            player_rows = cur.fetchall()
 
-            for (player_fpl_id,) in player_rows:
-                try:
-                    data = _fpl_get(f"/element-summary/{player_fpl_id}/")
-                except Exception as exc:
-                    log.warning(
-                        "[Thread-Write] failed to fetch element-summary for player %d: %s",
-                        player_fpl_id,
-                        exc,
-                    )
-                    continue
+    if rows:
+        updates = ", ".join(
+            f"{c} = EXCLUDED.{c}"
+            for c in _STATS_COLUMNS
+            if c not in ("season_id", "player_fpl_id", "fixture_fpl_id")
+        )
+        psycopg2.extras.execute_values(
+            cur,
+            f"INSERT INTO gw_player_stats ({', '.join(_STATS_COLUMNS)}) VALUES %s "
+            f"ON CONFLICT (season_id, player_fpl_id, fixture_fpl_id) DO UPDATE SET {updates}",
+            list(rows.values()),
+            page_size=500,
+        )
 
-                history = data.get("history", [])
-                for g in history:
-                    if g.get("fixture") != fixture_id:
-                        continue  # Only write the row for this specific fixture
-
-                    def _gf(key: str) -> float | None:
-                        """Parse a string field to float, returning None if empty."""
-                        v = g.get(key)
-                        return float(v) if v else None
-
-                    try:
-                        cur.execute(
-                            """
-                            INSERT INTO gw_player_stats (
-                                season_id, player_fpl_id, gw_number, fixture_fpl_id,
-                                opponent_team_fpl_id, was_home,
-                                team_h_score, team_a_score,
-                                minutes, goals_scored, assists, clean_sheets,
-                                goals_conceded, own_goals, penalties_saved,
-                                penalties_missed, yellow_cards, red_cards,
-                                saves, bonus, bps, total_points,
-                                value, selected, transfers_in, transfers_out,
-                                transfers_balance,
-                                influence, creativity, threat, ict_index,
-                                expected_goals, expected_assists,
-                                expected_goal_involvements, expected_goals_conceded,
-                                starts
-                            ) VALUES (
-                                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                                %s,%s,%s,%s,%s,%s
-                            )
-                            ON CONFLICT (season_id, player_fpl_id, fixture_fpl_id) DO UPDATE SET
-                                total_points = EXCLUDED.total_points,
-                                minutes = EXCLUDED.minutes,
-                                goals_scored = EXCLUDED.goals_scored,
-                                assists = EXCLUDED.assists,
-                                clean_sheets = EXCLUDED.clean_sheets,
-                                bonus = EXCLUDED.bonus,
-                                bps = EXCLUDED.bps,
-                                expected_goals = EXCLUDED.expected_goals,
-                                expected_assists = EXCLUDED.expected_assists,
-                                expected_goal_involvements = EXCLUDED.expected_goal_involvements,
-                                expected_goals_conceded = EXCLUDED.expected_goals_conceded
-                            """,
-                            (
-                                season_id,
-                                player_fpl_id,
-                                g["round"],
-                                fixture_id,
-                                g["opponent_team"],
-                                g["was_home"],
-                                g.get("team_h_score"),
-                                g.get("team_a_score"),
-                                g.get("minutes", 0),
-                                g.get("goals_scored", 0),
-                                g.get("assists", 0),
-                                g.get("clean_sheets", 0),
-                                g.get("goals_conceded", 0),
-                                g.get("own_goals", 0),
-                                g.get("penalties_saved", 0),
-                                g.get("penalties_missed", 0),
-                                g.get("yellow_cards", 0),
-                                g.get("red_cards", 0),
-                                g.get("saves", 0),
-                                g.get("bonus", 0),
-                                g.get("bps", 0),
-                                g.get("total_points", 0),
-                                g.get("value"),
-                                g.get("selected"),
-                                g.get("transfers_in"),
-                                g.get("transfers_out"),
-                                g.get("transfers_balance"),
-                                _gf("influence"),
-                                _gf("creativity"),
-                                _gf("threat"),
-                                _gf("ict_index"),
-                                _gf("expected_goals"),
-                                _gf("expected_assists"),
-                                _gf("expected_goal_involvements"),
-                                _gf("expected_goals_conceded"),
-                                g.get("starts"),
-                            ),
-                        )
-                        total_rows += 1
-                    except Exception as exc:
-                        log.warning(
-                            "[Thread-Write] failed to upsert stat row player=%d fixture=%d: %s",
-                            player_fpl_id,
-                            fixture_id,
-                            exc,
-                        )
-
-    log.info("[Thread-Write] upserted %d gw_player_stats rows.", total_rows)
-    return total_rows
+    log.info("[Thread-Write] upserted %d gw_player_stats rows.", len(rows))
+    return len(rows)
 
 
 def delta_write(fpl_result: dict | None) -> bool:
     """
-    Thread 3: write fetched data to PostgreSQL, only what's new since last run.
+    Write the fetched FPL data to PostgreSQL in a single transaction.
 
     Must not be called until Thread 1 has finished (enforced by the orchestrator
     using concurrent.futures.wait).
 
     Execution steps:
-      1. Open a read-only connection to determine the delta boundary (last kickoff).
-      2. Open a read/write ETL connection for all writes.
-      3. Upsert season, teams, players, and gameweeks from FPL bootstrap.
-      4. Upsert only fixtures newer than the delta boundary.
-      5. For finished new fixtures, fetch and upsert per-player GW stats.
-      6. Commit everything atomically.
+      1. Upsert season, teams, gameweeks and players from bootstrap-static.
+      2. Upsert ALL fixtures, so scores and ``finished`` flags are always current.
+      3. For finished fixtures with no stats yet (or played in the last
+         _STATS_REFRESH_DAYS days), fetch and upsert per-player match stats.
+      4. Commit everything atomically; roll back on any error.
+
+    The "delta" is in step 3: player stats are only fetched for fixtures that need
+    them, which keeps steady-state runs to a handful of HTTP requests.
 
     Args:
         fpl_result: Return value of fetch_fpl_data(), or None if that thread failed.
@@ -634,63 +642,39 @@ def delta_write(fpl_result: dict | None) -> bool:
         log.error("[Thread-Write] FPL fetch failed — no data to write. Aborting delta write.")
         return False
 
-    # Step 1: determine delta boundary using a read-only connection.
-    log.info("[Thread-Write] querying for last kickoff_time...")
     try:
-        ro_conn = _get_db_conn(etl=False)
-        try:
-            last_kickoff = _get_last_kickoff(ro_conn)
-        finally:
-            ro_conn.close()
+        conn = _get_db_conn()
     except Exception as exc:
-        log.error(
-            "[Thread-Write] failed to read last kickoff from DB: %s",
-            exc,
-            exc_info=True,
-        )
-        return False
-
-    log.info("[Thread-Write] last recorded kickoff: %s", last_kickoff)
-
-    # Step 2: open the ETL (read/write) connection for all writes.
-    try:
-        etl_conn = _get_db_conn(etl=True)
-    except Exception as exc:
-        log.error("[Thread-Write] failed to open ETL DB connection: %s", exc, exc_info=True)
+        log.error("[Thread-Write] failed to open DB connection: %s", exc, exc_info=True)
         return False
 
     try:
-        with etl_conn.cursor() as cur:
+        with conn.cursor() as cur:
             bootstrap = fpl_result["bootstrap"]
             fixtures = fpl_result["fixtures"]
 
-            # Step 3: upsert season, teams, players.
             season_id = _upsert_season(cur, bootstrap)
             _upsert_teams(cur, season_id, bootstrap)
+            _upsert_gameweeks(cur, season_id, bootstrap)
             _upsert_players(cur, season_id, bootstrap)
+            _upsert_fixtures(cur, season_id, fixtures)
 
-            # Step 4: delta fixture upsert.
-            new_fixtures = _upsert_new_fixtures(cur, season_id, fixtures, last_kickoff)
+            pending = _fixtures_needing_stats(cur, season_id)
+            if pending:
+                _fetch_and_upsert_player_stats(cur, season_id, pending)
+            else:
+                log.info("[Thread-Write] no finished fixtures need player stats.")
 
-            # Step 5: GW player stats for newly-finished fixtures.
-            if new_fixtures:
-                _fetch_and_upsert_player_stats(cur, season_id, new_fixtures)
-
-        # Step 6: commit atomically — all-or-nothing.
-        etl_conn.commit()
+        conn.commit()
         log.info("[Thread-Write] delta write committed successfully.")
         return True
 
     except Exception as exc:
-        etl_conn.rollback()
-        log.error(
-            "[Thread-Write] delta write failed — rolling back: %s",
-            exc,
-            exc_info=True,
-        )
+        conn.rollback()
+        log.error("[Thread-Write] delta write failed — rolling back: %s", exc, exc_info=True)
         return False
     finally:
-        etl_conn.close()
+        conn.close()
 
 
 # ---------------------------------------------------------------------------

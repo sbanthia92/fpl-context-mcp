@@ -1,0 +1,30 @@
+name: Backfill Past Seasons
+
+# One-time (re-runnable) job: loads past-season player totals into PostgreSQL from
+# FPL's history_past data. Run it by hand from the Actions tab after the first
+# match-data ingestion. There is no schedule — past seasons don't change.
+
+on:
+  workflow_dispatch: # manual trigger from the GitHub Actions UI
+
+jobs:
+  backfill:
+    name: Backfill past seasons to PostgreSQL
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package and dependencies
+        run: pip install -e .
+
+      - name: Run history backfill
+        env:
+          DATABASE_ETL_URL: ${{ secrets.DATABASE_ETL_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m jobs.backfill_history

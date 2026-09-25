@@ -1,6 +1,6 @@
 [project]
 name = "fpl-context-mcp"
-version = "0.4.0"
+version = "0.5.0"
 description = "MCP server that gives Claude Fantasy Premier League stats and press/injury news search, with ingestion jobs that keep PostgreSQL and Pinecone up to date."
 readme = "README.md"
 license = "MIT"
@@ -52,6 +52,7 @@ Issues = "https://github.com/sbanthia92/fpl-context-mcp/issues"
 fpl-context-mcp = "server:main"
 fpl-context-ingest-press = "jobs.ingest_press_content:main"
 fpl-context-ingest-match = "jobs.ingest_match_data:main"
+fpl-context-backfill-history = "jobs.backfill_history:main"
 
 # Run the MCP server: cd fpl-context-mcp && python server.py
 # (stdio transport — register in claude_desktop_config.json or via mcp install)

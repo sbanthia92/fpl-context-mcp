@@ -10,8 +10,14 @@
 -- Adjust types/constraints to taste — this is a starting point, not a
 -- migration tool.
 --
--- Note: ingest_match_data loads the CURRENT season only (the FPL API does not
--- serve past seasons), and it does not write the gameweeks table.
+-- ingest_match_data writes the CURRENT season (teams, players, gameweeks, fixtures,
+-- gw_player_stats). backfill_history adds past seasons as one `players` row per
+-- player per season (season totals only; FPL doesn't serve past fixtures or
+-- per-match stats), which is why players.team_fpl_id is nullable.
+--
+-- Upgrading a database created from an earlier version of this file:
+--   ALTER TABLE players ALTER COLUMN team_fpl_id DROP NOT NULL;
+--   DROP MATERIALIZED VIEW IF EXISTS player_xpts;   -- no longer used
 
 CREATE TABLE IF NOT EXISTS seasons (
     id         SERIAL PRIMARY KEY,
@@ -48,7 +54,7 @@ CREATE TABLE IF NOT EXISTS gameweeks (
 CREATE TABLE IF NOT EXISTS players (
     season_id                     INTEGER NOT NULL REFERENCES seasons(id),
     fpl_id                        INTEGER NOT NULL,
-    team_fpl_id                   INTEGER NOT NULL,
+    team_fpl_id                   INTEGER,  -- NULL for past seasons (team not provided by FPL)
     first_name                    TEXT,
     second_name                   TEXT,
     web_name                      TEXT NOT NULL,
@@ -142,21 +148,6 @@ CREATE TABLE IF NOT EXISTS gw_player_stats (
     PRIMARY KEY (season_id, player_fpl_id, fixture_fpl_id),
     FOREIGN KEY (season_id, player_fpl_id) REFERENCES players(season_id, fpl_id)
 );
-
--- Materialized view: next-gameweek expected-points projection per player.
--- Populate/refresh this however your projection model works — this is just
--- the shape query_historical_stats expects to find.
-CREATE MATERIALIZED VIEW IF NOT EXISTS player_xpts AS
-SELECT
-    p.fpl_id AS player_fpl_id,
-    p.web_name,
-    t.name AS team_name,
-    p.position,
-    p.now_cost,
-    0::numeric AS expected_points  -- replace with your projection logic
-FROM players p
-JOIN teams t ON t.season_id = p.season_id AND t.fpl_id = p.team_fpl_id
-JOIN seasons s ON s.id = p.season_id AND s.is_current;
 
 -- Roles used by this package (see README "Prerequisites" / config.py):
 --   gaffer_readonly — used by query_historical_stats (SELECT only)

@@ -5,15 +5,16 @@ All HTTP and PostgreSQL calls are mocked. Tests cover thread coordination,
 delta filtering, partial failure handling, and the full run() orchestration.
 """
 
-from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from jobs.ingest_match_data import (
-    _get_last_kickoff,
+    _fetch_and_upsert_player_stats,
+    _fixtures_needing_stats,
     _parse_dt,
-    _upsert_new_fixtures,
+    _upsert_fixtures,
+    _upsert_gameweeks,
     delta_write,
     fetch_fpl_data,
     main,
@@ -40,40 +41,11 @@ def test_parse_dt_none():
 
 
 # ---------------------------------------------------------------------------
-# _get_last_kickoff
+# _upsert_fixtures — every fixture is written on every run
 # ---------------------------------------------------------------------------
 
 
-def test_get_last_kickoff_returns_datetime():
-    """Returns the datetime from the DB query."""
-    expected = datetime(2026, 5, 4, 15, 0, 0, tzinfo=UTC)
-    conn = MagicMock()
-    cur = MagicMock()
-    conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
-    conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    cur.fetchone.return_value = (expected,)
-
-    result = _get_last_kickoff(conn)
-    assert result == expected
-
-
-def test_get_last_kickoff_returns_none_when_empty():
-    """Returns None when the fixtures table is empty."""
-    conn = MagicMock()
-    cur = MagicMock()
-    conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
-    conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    cur.fetchone.return_value = (None,)
-
-    assert _get_last_kickoff(conn) is None
-
-
-# ---------------------------------------------------------------------------
-# _upsert_new_fixtures — delta filtering
-# ---------------------------------------------------------------------------
-
-
-def _make_fixture(fpl_id: int, kickoff: str, finished: bool = True) -> dict:
+def _make_fixture(fpl_id: int, kickoff: str | None, finished: bool = True) -> dict:
     return {
         "id": fpl_id,
         "event": 35,
@@ -89,46 +61,145 @@ def _make_fixture(fpl_id: int, kickoff: str, finished: bool = True) -> dict:
     }
 
 
-def test_upsert_new_fixtures_filters_old():
-    """Fixtures with kickoff_time <= last_kickoff are not upserted."""
-    cur = MagicMock()
-    last_kickoff = datetime(2026, 5, 5, 15, 0, 0, tzinfo=UTC)
+def test_upsert_fixtures_writes_every_fixture_including_future():
+    """Past AND future fixtures are all upserted — no kickoff-based delta filter.
 
-    fixtures = [
-        _make_fixture(1, "2026-05-03T15:00:00Z"),  # before cutoff → skip
-        _make_fixture(2, "2026-05-10T14:00:00Z"),  # after cutoff → include
-    ]
-
-    new = _upsert_new_fixtures(cur, season_id=1, fixtures=fixtures, last_kickoff=last_kickoff)
-
-    assert len(new) == 1
-    assert new[0]["id"] == 2
-    cur.execute.assert_called_once()  # only one INSERT
-
-
-def test_upsert_new_fixtures_includes_all_when_no_last_kickoff():
-    """When last_kickoff is None (first run), all fixtures are upserted."""
+    Regression: a MAX(kickoff_time) delta froze results after the first run, because
+    the first run stored future fixtures too.
+    """
     cur = MagicMock()
     fixtures = [
-        _make_fixture(1, "2026-04-01T15:00:00Z"),
-        _make_fixture(2, "2026-05-01T15:00:00Z"),
+        _make_fixture(1, "2026-08-22T15:00:00Z"),
+        _make_fixture(2, "2027-05-30T15:00:00Z", finished=False),
     ]
 
-    new = _upsert_new_fixtures(cur, season_id=1, fixtures=fixtures, last_kickoff=None)
+    count = _upsert_fixtures(cur, season_id=1, fixtures=fixtures)
 
-    assert len(new) == 2
+    assert count == 2
     assert cur.execute.call_count == 2
 
 
-def test_upsert_new_fixtures_skips_no_kickoff():
+def test_upsert_fixtures_skips_no_kickoff():
     """Fixtures without a kickoff_time (postponed) are skipped."""
     cur = MagicMock()
     fixtures = [{"id": 99, "kickoff_time": None, "team_h": 1, "team_a": 2}]
 
-    new = _upsert_new_fixtures(cur, season_id=1, fixtures=fixtures, last_kickoff=None)
-
-    assert new == []
+    assert _upsert_fixtures(cur, season_id=1, fixtures=fixtures) == 0
     cur.execute.assert_not_called()
+
+
+def test_upsert_fixtures_swaps_difficulty_and_stores_scores():
+    """FPL's difficulty figures are from the opponent's view, so they're swapped."""
+    cur = MagicMock()
+    _upsert_fixtures(cur, season_id=7, fixtures=[_make_fixture(5, "2026-09-19T14:00:00Z")])
+
+    params = cur.execute.call_args.args[1]
+    assert params[0] == 7  # season_id
+    assert params[6:8] == (2, 1)  # home_score, away_score
+    assert params[10:12] == (4, 3)  # home/away difficulty swapped (team_a=4, team_h=3)
+
+
+def test_upsert_gameweeks_writes_each_event():
+    """Every bootstrap event becomes a gameweeks row with its flags and scores."""
+    cur = MagicMock()
+    bootstrap = {
+        "events": [
+            {
+                "id": 1,
+                "deadline_time": "2026-08-21T17:30:00Z",
+                "is_current": False,
+                "is_next": False,
+                "finished": True,
+                "average_entry_score": 55,
+                "highest_score": 130,
+            },
+            {"id": 2, "deadline_time": "2026-08-28T17:30:00Z", "is_current": True},
+        ]
+    }
+
+    _upsert_gameweeks(cur, season_id=3, bootstrap=bootstrap)
+
+    assert cur.execute.call_count == 2
+    first = cur.execute.call_args_list[0].args[1]
+    assert first[0:2] == (3, 1)
+    assert first[3:] == (False, False, True, 55, 130)
+    second = cur.execute.call_args_list[1].args[1]
+    assert second[3] is True  # is_current
+
+
+# ---------------------------------------------------------------------------
+# Player stats — which fixtures, and how they're fetched
+# ---------------------------------------------------------------------------
+
+
+def test_fixtures_needing_stats_queries_with_refresh_window():
+    """Finished fixtures lacking stats (or played recently) are selected."""
+    cur = MagicMock()
+    cur.fetchall.return_value = [(100, 5, 1, 2)]
+
+    result = _fixtures_needing_stats(cur, season_id=4)
+
+    assert result == [(100, 5, 1, 2)]
+    sql, params = cur.execute.call_args.args
+    assert "NOT EXISTS" in sql and "f.finished" in sql
+    assert params == (4, 2)
+
+
+def _history_row(fixture: int, points: int = 6) -> dict:
+    return {
+        "fixture": fixture,
+        "round": 5,
+        "opponent_team": 2,
+        "was_home": True,
+        "total_points": points,
+        "minutes": 90,
+    }
+
+
+def test_fetch_player_stats_fetches_each_player_once_and_filters_fixtures():
+    """One request per player; only history rows for pending fixtures are written."""
+    cur = MagicMock()
+    cur.fetchall.return_value = [(10,), (11,)]  # player ids on the involved teams
+    pending = [(100, 5, 1, 2), (101, 6, 1, 3)]  # a "double gameweek" for team 1
+
+    summaries = {
+        10: {"history": [_history_row(100), _history_row(101), _history_row(999)]},
+        11: {"history": [_history_row(100)]},
+    }
+
+    with (
+        patch(
+            "jobs.ingest_match_data._fpl_get",
+            side_effect=lambda path, **_: summaries[int(path.strip("/").split("/")[-1])],
+        ) as mock_get,
+        patch("jobs.ingest_match_data.psycopg2.extras.execute_values") as mock_batch,
+    ):
+        written = _fetch_and_upsert_player_stats(cur, season_id=1, pending=pending)
+
+    assert mock_get.call_count == 2  # once per player, not per fixture
+    assert written == 3  # p10: fixtures 100+101 (999 ignored), p11: fixture 100
+    rows = mock_batch.call_args.args[2]
+    assert {(r[1], r[3]) for r in rows} == {(10, 100), (10, 101), (11, 100)}
+
+
+def test_fetch_player_stats_tolerates_failed_player_requests():
+    """A failing element-summary request skips that player but writes the rest."""
+    cur = MagicMock()
+    cur.fetchall.return_value = [(10,), (11,)]
+
+    def fake_get(path, **_):
+        if "/10/" in path:
+            raise RuntimeError("timeout")
+        return {"history": [_history_row(100)]}
+
+    with (
+        patch("jobs.ingest_match_data._fpl_get", side_effect=fake_get),
+        patch("jobs.ingest_match_data.psycopg2.extras.execute_values") as mock_batch,
+    ):
+        written = _fetch_and_upsert_player_stats(cur, 1, [(100, 5, 1, 2)])
+
+    assert written == 1
+    assert mock_batch.call_args.args[2][0][1] == 11
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +237,7 @@ def _make_fpl_result() -> dict:
         "bootstrap": {
             "elements": [],
             "teams": [],
-            "events": [{"deadline_time": "2026-08-01T17:30:00Z"}],
+            "events": [{"id": 1, "deadline_time": "2026-08-01T17:30:00Z"}],
         },
         "fixtures": [],
     }
@@ -180,52 +251,79 @@ def test_delta_write_aborts_if_fpl_result_is_none():
     mock_conn.assert_not_called()
 
 
-def test_delta_write_commits_on_success():
-    """delta_write commits when the FPL fetch succeeded."""
-    fpl_result = _make_fpl_result()
-
-    ro_conn = MagicMock()
-    etl_conn = MagicMock()
+def _etl_conn() -> tuple[MagicMock, MagicMock]:
+    conn = MagicMock()
     cur = MagicMock()
     cur.fetchone.return_value = (1,)  # season_id
-    cur.fetchall.return_value = []  # no players for stat fetch
-    etl_conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
-    etl_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    cur.fetchall.return_value = []  # nothing pending
+    conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
+    conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    return conn, cur
 
-    ro_conn.cursor.return_value.__enter__ = MagicMock(
-        return_value=MagicMock(fetchone=MagicMock(return_value=(None,)))
-    )
-    ro_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
-    with patch("jobs.ingest_match_data._get_db_conn", side_effect=[ro_conn, etl_conn]):
-        delta_write(fpl_result=fpl_result)
+def test_delta_write_commits_on_success():
+    """delta_write commits when the FPL fetch succeeded."""
+    conn, _ = _etl_conn()
 
-    # Should commit without error
-    etl_conn.commit.assert_called_once()
+    with patch("jobs.ingest_match_data._get_db_conn", return_value=conn):
+        assert delta_write(fpl_result=_make_fpl_result()) is True
+
+    conn.commit.assert_called_once()
+    conn.rollback.assert_not_called()
 
 
 def test_delta_write_rolls_back_on_error():
     """delta_write rolls back the transaction if any write step raises."""
-    fpl_result = _make_fpl_result()
-
-    ro_conn = MagicMock()
-    etl_conn = MagicMock()
-    cur = MagicMock()
-    # Simulate a DB write failure on the first execute call
+    conn, cur = _etl_conn()
     cur.execute.side_effect = Exception("DB write failed")
-    etl_conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
-    etl_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
-    ro_conn.cursor.return_value.__enter__ = MagicMock(
-        return_value=MagicMock(fetchone=MagicMock(return_value=(None,)))
-    )
-    ro_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    with patch("jobs.ingest_match_data._get_db_conn", return_value=conn):
+        assert delta_write(fpl_result=_make_fpl_result()) is False
 
-    with patch("jobs.ingest_match_data._get_db_conn", side_effect=[ro_conn, etl_conn]):
-        delta_write(fpl_result=fpl_result)
+    conn.rollback.assert_called_once()
+    conn.commit.assert_not_called()
 
-    etl_conn.rollback.assert_called_once()
-    etl_conn.commit.assert_not_called()
+
+def test_delta_write_upserts_all_fixtures_then_fetches_pending_stats():
+    """All fixtures are written each run; stats are fetched only for pending fixtures."""
+    conn, _ = _etl_conn()
+    result = _make_fpl_result()
+    result["fixtures"] = [
+        _make_fixture(1, "2026-08-22T15:00:00Z"),
+        _make_fixture(2, "2027-05-30T15:00:00Z", False),
+    ]
+    pending = [(1, 1, 1, 2)]
+
+    with (
+        patch("jobs.ingest_match_data._get_db_conn", return_value=conn),
+        patch("jobs.ingest_match_data._upsert_fixtures") as mock_fx,
+        patch("jobs.ingest_match_data._fixtures_needing_stats", return_value=pending),
+        patch("jobs.ingest_match_data._fetch_and_upsert_player_stats") as mock_stats,
+    ):
+        assert delta_write(result) is True
+
+    assert mock_fx.call_args.args[2] == result["fixtures"]  # the full list, no filtering
+    assert mock_stats.call_args.args[2] == pending
+
+
+def test_delta_write_skips_stats_fetch_when_nothing_pending():
+    """Steady state: no finished fixture needs stats, so no player requests are made."""
+    conn, _ = _etl_conn()
+
+    with (
+        patch("jobs.ingest_match_data._get_db_conn", return_value=conn),
+        patch("jobs.ingest_match_data._fixtures_needing_stats", return_value=[]),
+        patch("jobs.ingest_match_data._fetch_and_upsert_player_stats") as mock_stats,
+    ):
+        assert delta_write(_make_fpl_result()) is True
+
+    mock_stats.assert_not_called()
+
+
+def test_delta_write_returns_false_when_db_unreachable():
+    """A connection failure is reported as a failed run."""
+    with patch("jobs.ingest_match_data._get_db_conn", side_effect=RuntimeError("no db")):
+        assert delta_write(_make_fpl_result()) is False
 
 
 # ---------------------------------------------------------------------------
