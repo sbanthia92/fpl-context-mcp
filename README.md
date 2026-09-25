@@ -46,8 +46,8 @@ The full path from zero to a working MCP tool, in order. Each step links to deta
 2. **Provision storage**: a PostgreSQL database and a Pinecone index. If you're not reusing [The Gaffer](https://github.com/sbanthia92/Gaffer)'s existing storage, run [`db/schema.sql`](db/schema.sql) against a fresh Postgres database and create a Pinecone index named `the-gaffer` (or your own name) using the `multilingual-e5-large` model — see [Provisioning your own database](#provisioning-your-own-database-standalone-only).
 3. **Configure**: copy [`.env.example`](.env.example) to `.env` and fill in your `DATABASE_URL`, `DATABASE_ETL_URL`, and `PINECONE_API_KEY` — see [Configuration](#configuration).
 4. **Verify connectivity**: `fpl-context-mcp --check` — confirms every credential works before you go further.
-5. **Seed data**: run both ingestion commands once so there's actually something to query — see [Seeding data](#seeding-data-required-before-first-use).
-6. **Schedule ongoing ingestion**: set up cron (or equivalent) to keep re-running those same two commands indefinitely — see [Keeping data fresh](#keeping-data-fresh-ongoing). Skipping this is the #1 cause of "the tool returns nothing" reports.
+5. **Seed data**: run the two ingestion commands, then the one-time history backfill, so there's actually something to query — see [Seeding data](#seeding-data-required-before-first-use).
+6. **Schedule ongoing ingestion**: set up cron (or equivalent) to keep re-running the two ingestion commands (not the backfill) indefinitely — see [Keeping data fresh](#keeping-data-fresh-ongoing). Skipping this is the #1 cause of "the tool returns nothing" reports.
 7. **Register with Claude Desktop**: add the server to `claude_desktop_config.json` and restart Claude — see [Registering with Claude Desktop](#registering-with-claude-desktop).
 
 ---
@@ -72,7 +72,7 @@ You can point this server at [The Gaffer](https://github.com/sbanthia92/Gaffer)'
 pip install fpl-context-mcp
 ```
 
-This installs three CLI commands: `fpl-context-mcp` (the MCP server), `fpl-context-ingest-press`, and `fpl-context-ingest-match` (the two ingestion jobs — see [Seeding data](#seeding-data-required-before-first-use)).
+This installs four CLI commands: `fpl-context-mcp` (the MCP server), `fpl-context-ingest-press` and `fpl-context-ingest-match` (the two recurring ingestion jobs), and `fpl-context-backfill-history` (a one-time job for past seasons) — see [Seeding data](#seeding-data-required-before-first-use).
 
 ### With uv
 
@@ -145,7 +145,7 @@ createdb gaffer   # or whatever database name you'll use in DATABASE_URL
 psql gaffer -f db/schema.sql
 ```
 
-[`db/schema.sql`](db/schema.sql) creates the six tables `query_historical_stats` expects (`seasons`, `teams`, `gameweeks`, `players`, `fixtures`, `gw_player_stats`, plus the `player_xpts` materialized view) and includes example `CREATE ROLE` statements for the read-only and read/write roles referenced in `.env.example`. It's a starting schema, not a full migration tool — adjust types/constraints as needed.
+[`db/schema.sql`](db/schema.sql) creates the six tables `query_historical_stats` expects (`seasons`, `teams`, `gameweeks`, `players`, `fixtures`, `gw_player_stats`) and includes example `CREATE ROLE` statements for the read-only and read/write roles referenced in `.env.example`. It's a starting schema, not a full migration tool — adjust types/constraints as needed.
 
 **Pinecone:**
 
@@ -165,18 +165,28 @@ Both ingestion jobs are plain functions you run directly — nothing runs automa
 # If installed from PyPI
 fpl-context-ingest-press
 fpl-context-ingest-match
+fpl-context-backfill-history   # one-time: past seasons (see below)
 
 # If running from source
 python -m jobs.ingest_press_content
 python -m jobs.ingest_match_data
+python -m jobs.backfill_history
 ```
 
-Run both **once, right after configuring your `.env`**, before registering the server with Claude Desktop. Until you do:
+Run these **once, right after configuring your `.env`**, before registering the server with Claude Desktop. Run `fpl-context-ingest-match` before the backfill. Until you do:
 
 - `query_press_conferences` will return a message telling you the namespace is unseeded, instead of any article content.
 - `query_historical_stats` will return `Query returned no results.` for any query, since the tables are empty.
 
-`ingest_match_data` loads the **current season** on first run — every team, player and fixture, plus per-player stats for matches already played (the first run can take a while mid-season, since it fetches stats one player at a time). The FPL API only serves the current season, so past seasons aren't backfilled: history builds up over time as you keep the job running, or you can load older seasons into the same tables yourself. The `gameweeks` table is not written by this job, so it stays empty unless you fill it. `ingest_press_content` only pulls currently-live articles (BBC/Guardian don't offer deep history), so the press index will be thin until it's had a few days of scheduled runs — that's expected, not a bug.
+`ingest_match_data` loads the **current season**: every team, gameweek, player and fixture, plus per-player stats for matches already played (the first run can take several minutes mid-season, since it fetches stats player by player). Later runs are quick — see [What each run updates](#what-each-run-updates).
+
+`fpl-context-backfill-history` adds **past seasons** (as far back as FPL has them, about 20). It reads FPL's per-player season history and writes one row per player per season into `players`. It's safe to re-run and only needs to run once, since past seasons don't change. **Know its limits:**
+
+- It holds **season totals only** — points, minutes, goals, assists, clean sheets, cards, bonus. FPL doesn't serve past fixtures, teams or match-by-match stats, so those tables only ever contain the current season.
+- Past-season rows have `team_fpl_id` set to NULL (FPL doesn't say which team a player was on), and `fpl_id` is the player's *current* FPL id.
+- **It only covers players in FPL's current player list.** Anyone who has left the league (or retired) has no history here, so a question about a departed player returns nothing, and league-wide or team-wide totals for a past season are incomplete. Per-player questions about current players are reliable.
+
+`ingest_press_content` only pulls currently-live articles (BBC/Guardian don't offer deep history), so the press index will be thin until it's had a few days of scheduled runs — that's expected, not a bug.
 
 ---
 
@@ -184,7 +194,18 @@ Run both **once, right after configuring your `.env`**, before registering the s
 
 **This is not a one-time step.** Fixtures change weekly, player stats update after every match, press articles are deleted from the index after 14 days, and injury/availability news is rewritten on every run so it reflects what FPL currently says (`ingest_press_content` prunes stale docs each time). If you seed once and never run these jobs again, a query a month later will hit a Pinecone namespace with **zero documents** (everything aged out) and a Postgres database that's **missing every fixture since your last run**.
 
-You need something to invoke `fpl-context-ingest-press` and `fpl-context-ingest-match` on a recurring schedule, indefinitely, for as long as the MCP server is in use. Pick whichever fits your setup:
+You need something to invoke `fpl-context-ingest-press` and `fpl-context-ingest-match` on a recurring schedule, indefinitely, for as long as the MCP server is in use. (The backfill is not part of this — run it once.) Pick whichever fits your setup:
+
+### What each run updates
+
+Runs are on a clock, not tied to gameweeks — nothing triggers when a match ends. A result shows up in your database at the first run after FPL marks the fixture finished.
+
+| Job | Each run | Freshness with the default schedule |
+|---|---|---|
+| `fpl-context-ingest-match` | Rewrites all teams, gameweeks (deadlines, current/next flags), players (points, form, price, availability) and **all 380 fixtures** (scores, finished flags, reschedules). Fetches per-player match stats for newly finished fixtures, and re-fetches those from the last 2 days because FPL revises bonus points after full time. | Up to about 12 hours behind (runs at 06:00 and 22:00 UTC) |
+| `fpl-context-ingest-press` | Adds new BBC/Guardian articles, rewrites every player's injury/availability item with FPL's current text, and deletes articles older than 14 days and injury items FPL has cleared. | Up to about 24 hours behind (nightly) |
+
+Run more often on matchdays if you want results sooner — each run takes a minute or two, and steady-state runs make very few requests to FPL.
 
 ### Option A — cron (simplest, any Linux/macOS host)
 
@@ -383,8 +404,10 @@ Executes a read-only SQL `SELECT` against the historical stats database.
 **Example prompts**
 
 - *"Who are the top 10 midfielders by total points this season?"*
-- *"How many goals has Salah scored this season?"*
-- *"Which teams have the best defensive record at home in 2024/25?"*
+- *"Which players have scored the most goals this season?"*
+- *"Show my captain candidate's goals and points over the last five seasons."* (past seasons only cover players still in the current FPL list)
+- *"When is the next gameweek deadline?"*
+- *"Which teams have the best defensive record at home this season?"*
 
 **Safety**
 
@@ -450,12 +473,11 @@ gw_player_stats  season_id, player_fpl_id, gw_number, fixture_fpl_id,
                  opponent_team_fpl_id, was_home, minutes, goals_scored,
                  assists, clean_sheets, bonus, total_points,
                  expected_goals, expected_assists, ict_index, starts
-
-player_xpts      materialized view: player_fpl_id, web_name, team_name,
-                 position, now_cost, expected_points (next GW projection)
 ```
 
-**Join hint:** `teams.fpl_id = players.team_fpl_id` (within the same `season_id`).
+**Current vs past seasons:** `teams`, `gameweeks`, `fixtures` and `gw_player_stats` hold the **current season only**. `players` also holds one totals-only row per player per past season (see [Seeding data](#seeding-data-required-before-first-use) for what that covers and what it misses).
+
+**Join hint:** `teams.fpl_id = players.team_fpl_id` (current season, same `season_id`; `team_fpl_id` is NULL for past seasons).
 
 ---
 
@@ -480,7 +502,8 @@ The test suite covers:
 | `tests/test_tools_stats.py` | Mutation guard, row formatter, async DB path, dry-run |
 | `tests/test_tools_press.py` | Pinecone query, recency re-ranking, degradation, dry-run |
 | `tests/test_ingest_press_content.py` | BBC/Guardian fetchers, deduplication, orchestration, dry-run |
-| `tests/test_ingest_match_data.py` | Delta filtering, thread coordination, rollback, dry-run |
+| `tests/test_ingest_match_data.py` | Fixture/gameweek upserts, stats selection, thread coordination, rollback, dry-run |
+| `tests/test_backfill_history.py` | Past-season backfill: season handling, NULL team, best-effort ALTER, exit codes |
 
 ---
 

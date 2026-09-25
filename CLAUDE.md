@@ -25,7 +25,8 @@ fpl-context-mcp/
     query_press_conferences.py     # MCP tool: semantic search → Pinecone 'press' namespace
   jobs/
     ingest_press_content.py        # Pinecone updater: BBC RSS + Guardian API, threaded
-    ingest_match_data.py           # PostgreSQL updater: FPL, delta write
+    ingest_match_data.py           # PostgreSQL updater: FPL, all fixtures + stats delta
+    backfill_history.py            # One-time: past-season player totals from FPL history_past
   tests/
     conftest.py
     test_config.py
@@ -42,12 +43,13 @@ fpl-context-mcp/
   .github/workflows/
     ingest_press_content.yml       # Nightly press ingestion (this repo's own data, not customers')
     ingest_match_data.yml          # Configurable match data ingestion (this repo's own data, not customers')
+    backfill_history.yml           # Manual (workflow_dispatch) past-season backfill
     publish.yml                    # Build + publish to PyPI via Trusted Publishing on v*.*.* tags
 ```
 
 Installed CLI entry points (`[project.scripts]` in `pyproject.toml`): `fpl-context-mcp`
-(the server), `fpl-context-ingest-press`, `fpl-context-ingest-match` (the two jobs —
-callable directly after `pip install`, no repo clone needed).
+(the server), `fpl-context-ingest-press`, `fpl-context-ingest-match` (the two recurring jobs),
+`fpl-context-backfill-history` (one-time) — callable directly after `pip install`, no repo clone needed.
 
 **Data ownership model**: this package is bring-your-own-backend. Every install talks to
 whatever `DATABASE_URL`/`PINECONE_API_KEY` the operator configures — their own storage,
@@ -73,6 +75,7 @@ python server.py
 # Run ingestion jobs manually
 python -m jobs.ingest_press_content
 python -m jobs.ingest_match_data
+python -m jobs.backfill_history   # one-time, past seasons
 ```
 
 ## Configuration
@@ -136,11 +139,26 @@ No other changes needed.
 ### `ingest_match_data`
 - Thread 1: FPL API bootstrap-static + fixtures
 - `concurrent.futures.wait([f1])` ensures Thread 3 never starts until the fetch thread completes
-- Thread 3 (delta write): finds `MAX(kickoff_time)` in PostgreSQL, upserts only newer fixtures
-  and their `gw_player_stats` rows. Commits atomically; rolls back on any write error.
+- Thread 3 (write, one transaction): upserts season, teams, gameweeks, players and **ALL**
+  fixtures every run, then fetches per-player match stats (`element-summary`, once per player,
+  8 concurrent requests) only for finished fixtures that have no stats yet or kicked off in the
+  last 2 days (bonus points get revised). Batched `execute_values` upsert; rolls back on error.
+- Only needs `DATABASE_ETL_URL` (falls back to `DATABASE_URL`).
 
-**Fetch failure**: if the fetch thread fails, its result is `None` and the delta
-writer logs the full traceback and aborts the write step.
+**Fetch failure**: if the fetch thread fails, its result is `None` and the writer logs the full
+traceback and returns False; the CLI exits 1.
+
+**Do not reintroduce a `MAX(kickoff_time)` delta for fixtures.** The first run stores all 380
+fixtures including future ones, so the boundary becomes the season's last day and every later run
+writes nothing — results and stats silently freeze. The delta belongs on *stats*, not fixtures.
+
+### `backfill_history` (one-time)
+- Reads `/element-summary/{id}/` `history_past` for every player in the current FPL list and
+  upserts one `players` row per player per past season (season totals; `team_fpl_id` NULL, `fpl_id`
+  = current id). Skips the current season. Best-effort `ALTER TABLE players ALTER COLUMN
+  team_fpl_id DROP NOT NULL` for databases created from an older schema.
+- Limitation: only players in the current FPL list, so departed players and league-wide past totals
+  are incomplete. FPL serves no past fixtures/teams/per-match stats.
 
 ## Pinecone document schema
 

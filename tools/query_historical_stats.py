@@ -71,7 +71,9 @@ Notes:
   - For past seasons, `players` has one row per player per season with season totals
     (points, minutes, goals, assists, clean sheets, cards, bonus). team_fpl_id is NULL
     there, and fpl_id is the player's current FPL id. Join seasons for the label.
-  - Players who have left the league may be missing from past seasons.
+  - Past seasons only include players in the CURRENT FPL player list. Departed players are
+    absent, so league-wide or team-wide totals for past seasons are incomplete; only trust
+    per-player history for players who appear in the current season.
 
 Join hint: teams.fpl_id = players.team_fpl_id (current season, same season_id).
 """
