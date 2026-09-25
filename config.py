@@ -44,7 +44,7 @@ class _Config:
     @property
     def pinecone_index_name(self) -> str:
         """Pinecone index name. Must match the index created in the Gaffer setup."""
-        return os.getenv("PINECONE_INDEX_NAME", "the-gaffer")
+        return os.getenv("PINECONE_INDEX_NAME") or "the-gaffer"
 
     @property
     def database_url(self) -> str:
@@ -71,7 +71,7 @@ class _Config:
         Register for free at https://open-platform.theguardian.com/access/.
         Defaults to 'test' (the public open key — lower rate limit, no full body text).
         """
-        return os.getenv("GUARDIAN_API_KEY", "test")
+        return os.getenv("GUARDIAN_API_KEY") or "test"
 
     @property
     def dry_run(self) -> bool:

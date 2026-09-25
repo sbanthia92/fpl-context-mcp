@@ -49,6 +49,18 @@ def test_guardian_api_key_defaults_to_test(monkeypatch):
     assert c.guardian_api_key == "test"
 
 
+def test_empty_guardian_key_falls_back_to_test(monkeypatch):
+    """An empty GUARDIAN_API_KEY (e.g. an unset GitHub Actions secret) means 'test'."""
+    monkeypatch.setenv("GUARDIAN_API_KEY", "")
+    assert _Config().guardian_api_key == "test"
+
+
+def test_empty_pinecone_index_name_falls_back_to_default(monkeypatch):
+    """An empty PINECONE_INDEX_NAME falls back to the default index name."""
+    monkeypatch.setenv("PINECONE_INDEX_NAME", "")
+    assert _Config().pinecone_index_name == "the-gaffer"
+
+
 def test_missing_pinecone_key_returns_empty_string(monkeypatch):
     """Missing PINECONE_API_KEY returns empty string (caller handles the error)."""
     monkeypatch.delenv("PINECONE_API_KEY", raising=False)

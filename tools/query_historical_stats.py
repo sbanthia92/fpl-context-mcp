@@ -2,7 +2,7 @@
 MCP tool: query_historical_stats
 
 Executes a read-only SQL SELECT against the Gaffer PostgreSQL database, which
-holds 3+ seasons of Premier League historical stats (players, fixtures, teams,
+holds Premier League stats for whichever seasons have been ingested (players, fixtures, teams,
 gameweeks, gw_player_stats).
 
 Safety guarantees mirror those in the Gaffer's server/tools/db.py:
@@ -46,7 +46,7 @@ _STATEMENT_TIMEOUT_MS = 10_000
 # knows what tables and columns are available without needing a separate schema
 # lookup call.
 SCHEMA_DESCRIPTION = """
-Available tables (read-only, current season + 3 historical seasons):
+Available tables (read-only; hold the seasons ingested so far, including the current one):
 
   seasons        — id, label (e.g. '2025/26'), start_year, is_current
   teams          — season_id, fpl_id, name, short_name, strength,

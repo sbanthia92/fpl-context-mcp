@@ -1,11 +1,28 @@
 [project]
 name = "sports-context-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "Standalone MCP server exposing sports stats and press-conference RAG as MCP tools, with threaded ingestion jobs for PostgreSQL and Pinecone."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Shubham Banthia", email = "sbanthia92@gmail.com" },
+]
+keywords = ["mcp", "model-context-protocol", "fantasy-premier-league", "fpl", "sports", "rag"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 requires-python = ">=3.11"
 dependencies = [
-    # MCP server framework (stdio transport)
-    "mcp>=1.0.0",
+    # MCP server framework (stdio transport). Pinned below 2.0 — server.py uses
+    # the mcp 1.x low-level Server decorator API (@server.list_tools() etc.),
+    # which mcp 2.x removed/rewrote entirely.
+    "mcp>=1.0.0,<2.0.0",
     # Pinecone vector store — used by the MCP tool and the press ingestion job
     "pinecone>=5.0.0",
     # Async PostgreSQL client — used by the MCP query tool (server is async)
@@ -24,6 +41,17 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "ruff>=0.4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/sbanthia92/sports-context-mcp"
+Repository = "https://github.com/sbanthia92/sports-context-mcp"
+Changelog = "https://github.com/sbanthia92/sports-context-mcp/blob/main/CHANGELOG.md"
+Issues = "https://github.com/sbanthia92/sports-context-mcp/issues"
+
+[project.scripts]
+sports-context-mcp = "server:main"
+sports-context-ingest-press = "jobs.ingest_press_content:main"
+sports-context-ingest-match = "jobs.ingest_match_data:main"
 
 # Run the MCP server: cd sports-context-mcp && python server.py
 # (stdio transport — register in claude_desktop_config.json or via mcp install)

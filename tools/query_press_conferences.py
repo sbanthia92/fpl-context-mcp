@@ -128,7 +128,18 @@ async def query_press_conferences(
     )
 
     if not results.matches:
-        return ""
+        log.warning(
+            "query_press_conferences: no matches in namespace=%r for query=%r "
+            "— has ingest_press_content been run yet?",
+            _NAMESPACE,
+            query,
+        )
+        return (
+            "No press documents found. This likely means the 'press' namespace hasn't "
+            "been seeded yet, or all indexed articles have expired (they're deleted after "
+            "14 days). Run the ingest_press_content job (see README) to populate it, and "
+            "make sure it's running on a recurring schedule to stay fresh."
+        )
 
     # Re-rank: final_score = semantic_score × (1 + recency_weight × recency_score)
     # recency_score is stored as metadata at ingest time: 1.0 today → 0.1 at 14 days.

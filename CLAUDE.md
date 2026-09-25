@@ -33,12 +33,28 @@ sports-context-mcp/
     test_tools_stats.py
     test_ingest_press_content.py
     test_ingest_match_data.py
+  db/
+    schema.sql                     # Reference PostgreSQL schema for standalone provisioning
   pyproject.toml
   CHANGELOG.md
+  LICENSE                          # MIT
+  .env.example
   .github/workflows/
-    ingest_press_content.yml       # Nightly press ingestion
-    ingest_match_data.yml          # Configurable match data ingestion
+    ingest_press_content.yml       # Nightly press ingestion (this repo's own data, not customers')
+    ingest_match_data.yml          # Configurable match data ingestion (this repo's own data, not customers')
+    publish.yml                    # Build + publish to PyPI via Trusted Publishing on v*.*.* tags
 ```
+
+Installed CLI entry points (`[project.scripts]` in `pyproject.toml`): `sports-context-mcp`
+(the server), `sports-context-ingest-press`, `sports-context-ingest-match` (the two jobs —
+callable directly after `pip install`, no repo clone needed).
+
+**Data ownership model**: this package is bring-your-own-backend. Every install talks to
+whatever `DATABASE_URL`/`PINECONE_API_KEY` the operator configures — their own storage,
+empty until they run the ingestion jobs themselves (README: "Seeding data" / "Keeping data
+fresh"). The `.github/workflows/ingest_*.yml` files in this repo only run against secrets
+configured on `sbanthia92/sports-context-mcp` and feed the maintainer's own database — they
+do not update data on behalf of anyone who installs the package from PyPI.
 
 ## Dev commands
 ```bash

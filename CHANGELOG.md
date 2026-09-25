@@ -6,6 +6,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-24
+
+### Added
+
+- **PyPI packaging metadata** — `pyproject.toml` now declares `authors`,
+  `license` (MIT), `readme`, `classifiers`, and `[project.urls]` so the
+  package renders correctly on PyPI.
+- **`[project.scripts]` entry points** — `sports-context-mcp` (the MCP
+  server, `server:main`), `sports-context-ingest-press`
+  (`jobs.ingest_press_content:run`), and `sports-context-ingest-match`
+  (`jobs.ingest_match_data:run`) are now installed as real CLI commands, so
+  a `pip install` alone is enough to run and cron-schedule the ingestion
+  jobs without cloning the repo.
+- **`LICENSE`** — MIT license.
+- **`.env.example`** — template for local `.env` setup, listing all
+  supported variables with placeholder values.
+- **`db/schema.sql`** — reference PostgreSQL schema (tables + example
+  read-only/ETL role grants) for anyone provisioning a database for this
+  server outside of The Gaffer.
+- **`.github/workflows/publish.yml`** — builds sdist/wheel and publishes to
+  PyPI via Trusted Publishing (OIDC) on `v*.*.*` tag push.
+- **README overhaul** — added a linear Quickstart, a "Provisioning your own
+  database" section, a "Seeding data (required before first use)" section,
+  and a "Keeping data fresh (ongoing)" section covering cron cadence and
+  scheduling options, including a copy-paste GitHub Actions workflow for a
+  customer's own private repo (no fork needed). Data staleness/emptiness was previously undocumented
+  as an ongoing operational requirement.
+
+### Fixed
+
+- **`db/schema.sql` now matches `jobs/ingest_match_data.py`.** The first draft
+  was missing about 40 columns the job writes (e.g. `fixtures.started`, most of
+  `players` and `gw_player_stats`) and keyed `gw_player_stats` on
+  `(season_id, player_fpl_id, gw_number)`, which made the job's
+  `ON CONFLICT (season_id, player_fpl_id, fixture_fpl_id)` fail.
+- **Docs no longer promise "3+ seasons" of history.** The job only loads the
+  current season (the FPL API serves nothing older) and does not write the
+  `gameweeks` table; README, tool descriptions and schema notes now say so.
+
+- **Ingestion jobs now fail loudly.** `ingest_press_content` and
+  `ingest_match_data` previously logged an error and exited 0 when credentials
+  were missing or the FPL fetch/DB write failed, so scheduled runs showed green
+  while doing nothing. `run()` now returns a bool and the new `main()` CLI
+  entry points (used by `sports-context-ingest-press` / `-match`) exit 1 on
+  failure, so CI marks the run red and GitHub sends a failure email.
+- **Empty env vars fall back to defaults.** `GUARDIAN_API_KEY` and
+  `PINECONE_INDEX_NAME` set to an empty string (what GitHub Actions passes for
+  an unset secret) previously overrode the `test` / `the-gaffer` defaults.
+- **`mcp` dependency pinned to `<2.0.0`** — `server.py` uses the mcp 1.x
+  low-level `Server` decorator API (`@server.list_tools()` etc.), which
+  mcp 2.x removed. The previous unbounded `mcp>=1.0.0` constraint meant a
+  fresh install today would pull mcp 2.2.0 and crash immediately on
+  startup.
+- **`query_press_conferences` no longer returns a silent empty string**
+  when the Pinecone namespace has no matches — it now returns a message
+  explaining the namespace may be unseeded or fully aged-out, so this
+  doesn't look like a working-but-answerless tool.
+
 ## [0.2.0] — 2026-05-11
 
 ### Removed

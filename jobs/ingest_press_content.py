@@ -34,6 +34,7 @@ Cron (EC2): 0 7,19 * * * cd /path/to/sports-context-mcp && python -m jobs.ingest
 
 import hashlib
 import logging
+import sys
 import time
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
@@ -626,7 +627,7 @@ def _upsert(
 # ---------------------------------------------------------------------------
 
 
-def run(dry_run: bool = False) -> None:
+def run(dry_run: bool = False) -> bool:
     """
     Run the full press content ingestion pipeline.
 
@@ -644,10 +645,13 @@ def run(dry_run: bool = False) -> None:
                  and deletes are skipped. Logs what would have been written so you can
                  verify connectivity and document counts before committing to a live run.
                  Can also be enabled via the DRY_RUN=true environment variable.
+
+    Returns:
+        True on success, False if the job could not run (e.g. missing PINECONE_API_KEY).
     """
     if not cfg.pinecone_api_key:
         log.error("PINECONE_API_KEY is not set — aborting press content ingestion.")
-        return
+        return False
 
     if dry_run:
         log.info("[dry run] press ingestion — fetches will run; Pinecone writes are skipped.")
@@ -688,7 +692,7 @@ def run(dry_run: bool = False) -> None:
             len(player_news_docs),
             _NAMESPACE,
         )
-        return
+        return True
 
     # Step 3: Upsert press articles (skip already-ingested documents).
     total = 0
@@ -711,7 +715,14 @@ def run(dry_run: bool = False) -> None:
         total,
         _NAMESPACE,
     )
+    return True
+
+
+def main() -> None:
+    """CLI entry point: exit non-zero on failure so schedulers/CI flag the run as failed."""
+    if not run(dry_run=cfg.dry_run):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    run(dry_run=cfg.dry_run)
+    main()

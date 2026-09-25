@@ -18,6 +18,7 @@ from jobs.ingest_press_content import (
     _existing_ids,
     _recency_score,
     _upsert,
+    main,
     run,
 )
 
@@ -443,3 +444,22 @@ def test_run_dry_run_still_fetches():
     mock_bbc.assert_called_once()
     mock_guardian.assert_called_once()
     mock_fpl.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Failure signalling (exit codes)
+# ---------------------------------------------------------------------------
+
+
+def test_run_returns_false_when_pinecone_key_missing(monkeypatch):
+    """run() reports failure instead of silently succeeding without credentials."""
+    monkeypatch.setenv("PINECONE_API_KEY", "")
+    assert run() is False
+
+
+def test_main_exits_nonzero_when_pinecone_key_missing(monkeypatch):
+    """The CLI entry point exits 1 so schedulers/CI mark the run as failed."""
+    monkeypatch.setenv("PINECONE_API_KEY", "")
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 1

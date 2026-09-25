@@ -24,6 +24,7 @@ Cron: see .github/workflows/ingest_match_data.yml for schedule.
 """
 
 import logging
+import sys
 import traceback
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from datetime import datetime
@@ -608,7 +609,7 @@ def _fetch_and_upsert_player_stats(
     return total_rows
 
 
-def delta_write(fpl_result: dict | None) -> None:
+def delta_write(fpl_result: dict | None) -> bool:
     """
     Thread 3: write fetched data to PostgreSQL, only what's new since last run.
 
@@ -625,10 +626,13 @@ def delta_write(fpl_result: dict | None) -> None:
 
     Args:
         fpl_result: Return value of fetch_fpl_data(), or None if that thread failed.
+
+    Returns:
+        True if the write committed, False if it was aborted or rolled back.
     """
     if fpl_result is None:
         log.error("[Thread-Write] FPL fetch failed — no data to write. Aborting delta write.")
-        return
+        return False
 
     # Step 1: determine delta boundary using a read-only connection.
     log.info("[Thread-Write] querying for last kickoff_time...")
@@ -644,7 +648,7 @@ def delta_write(fpl_result: dict | None) -> None:
             exc,
             exc_info=True,
         )
-        return
+        return False
 
     log.info("[Thread-Write] last recorded kickoff: %s", last_kickoff)
 
@@ -653,7 +657,7 @@ def delta_write(fpl_result: dict | None) -> None:
         etl_conn = _get_db_conn(etl=True)
     except Exception as exc:
         log.error("[Thread-Write] failed to open ETL DB connection: %s", exc, exc_info=True)
-        return
+        return False
 
     try:
         with etl_conn.cursor() as cur:
@@ -675,6 +679,7 @@ def delta_write(fpl_result: dict | None) -> None:
         # Step 6: commit atomically — all-or-nothing.
         etl_conn.commit()
         log.info("[Thread-Write] delta write committed successfully.")
+        return True
 
     except Exception as exc:
         etl_conn.rollback()
@@ -683,6 +688,7 @@ def delta_write(fpl_result: dict | None) -> None:
             exc,
             exc_info=True,
         )
+        return False
     finally:
         etl_conn.close()
 
@@ -692,7 +698,7 @@ def delta_write(fpl_result: dict | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def run(dry_run: bool = False) -> None:
+def run(dry_run: bool = False) -> bool:
     """
     Run the full match data ingestion pipeline.
 
@@ -711,6 +717,9 @@ def run(dry_run: bool = False) -> None:
                  would have been written so you can verify API reachability and
                  data shape before committing to a live run. Can also be enabled
                  via DRY_RUN=true.
+
+    Returns:
+        True on success, False if the fetch or the write failed.
     """
     log.info("=== ingest_match_data: starting%s ===", " [DRY RUN]" if dry_run else "")
 
@@ -742,14 +751,26 @@ def run(dry_run: bool = False) -> None:
                 fixtures,
             )
             log.info("=== ingest_match_data: complete [DRY RUN] ===")
-            return
+            return fpl_result is not None
 
         # Submit Thread 3 now that Thread 1 is guaranteed to be done.
         f3: Future = executor.submit(delta_write, fpl_result)
-        f3.result()  # Wait for the write thread; re-raises on unhandled exception.
+        # Wait for the write thread; re-raises on unhandled exception.
+        ok = f3.result() is not False
+
+    if not ok:
+        log.error("=== ingest_match_data: FAILED — see errors above ===")
+        return False
 
     log.info("=== ingest_match_data: complete ===")
+    return True
+
+
+def main() -> None:
+    """CLI entry point: exit non-zero on failure so schedulers/CI flag the run as failed."""
+    if not run(dry_run=cfg.dry_run):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    run(dry_run=cfg.dry_run)
+    main()
