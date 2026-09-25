@@ -618,6 +618,22 @@ def test_find_stale_ids_handles_legacy_docs_and_leaves_other_types_alone():
     assert sorted(news) == ["legacy_news", "stale_news"]
 
 
+def test_find_stale_ids_accepts_listitem_objects():
+    """Newer Pinecone SDKs yield ListItem objects (with .id) from list(), not strings."""
+    docs = {"old": {"type": "press_article", "pub_timestamp": NOW - 40 * DAY}}
+    index = _index_with(docs)
+    item = MagicMock()
+    item.id = "old"
+    index.list.return_value = iter([[item]])
+
+    press, _ = _find_stale_ids(
+        index, cutoff=NOW - 14 * DAY, run_started=NOW, prune_player_news=False
+    )
+
+    assert press == ["old"]
+    assert index.fetch.call_args.kwargs["ids"] == ["old"]  # plain string ids reach fetch
+
+
 def test_find_stale_ids_skips_player_news_when_not_pruning():
     """With prune_player_news=False no player_news doc is reported, however old."""
     docs = {"n": {"type": "player_news", "refreshed_at": 1.0}}

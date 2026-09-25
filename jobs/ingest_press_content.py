@@ -572,8 +572,9 @@ def _find_stale_ids(
     """
     stale_press: list[str] = []
     stale_news: list[str] = []
-    for ids in index.list(namespace=_NAMESPACE):
-        ids = list(ids)
+    for page in index.list(namespace=_NAMESPACE):
+        # Depending on the SDK version a page is a list of id strings or of ListItem objects.
+        ids = [getattr(item, "id", item) for item in page]
         for start in range(0, len(ids), _SCAN_BATCH):
             batch = ids[start : start + _SCAN_BATCH]
             for doc_id, vec in index.fetch(ids=batch, namespace=_NAMESPACE).vectors.items():
