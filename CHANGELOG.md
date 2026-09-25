@@ -30,11 +30,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **README overhaul** — added a linear Quickstart, a "Provisioning your own
   database" section, a "Seeding data (required before first use)" section,
   and a "Keeping data fresh (ongoing)" section covering cron cadence and
-  scheduling options. Data staleness/emptiness was previously undocumented
+  scheduling options, including a copy-paste GitHub Actions workflow for a
+  customer's own private repo (no fork needed). Data staleness/emptiness was previously undocumented
   as an ongoing operational requirement.
 
 ### Fixed
 
+- **Ingestion jobs now fail loudly.** `ingest_press_content` and
+  `ingest_match_data` previously logged an error and exited 0 when credentials
+  were missing or the FPL fetch/DB write failed, so scheduled runs showed green
+  while doing nothing. `run()` now returns a bool and the new `main()` CLI
+  entry points (used by `sports-context-ingest-press` / `-match`) exit 1 on
+  failure, so CI marks the run red and GitHub sends a failure email.
+- **Empty env vars fall back to defaults.** `GUARDIAN_API_KEY` and
+  `PINECONE_INDEX_NAME` set to an empty string (what GitHub Actions passes for
+  an unset secret) previously overrode the `test` / `the-gaffer` defaults.
 - **`mcp` dependency pinned to `<2.0.0`** — `server.py` uses the mcp 1.x
   low-level `Server` decorator API (`@server.list_tools()` etc.), which
   mcp 2.x removed. The previous unbounded `mcp>=1.0.0` constraint meant a

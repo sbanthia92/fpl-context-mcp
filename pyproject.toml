@@ -50,8 +50,8 @@ Issues = "https://github.com/sbanthia92/sports-context-mcp/issues"
 
 [project.scripts]
 sports-context-mcp = "server:main"
-sports-context-ingest-press = "jobs.ingest_press_content:run"
-sports-context-ingest-match = "jobs.ingest_match_data:run"
+sports-context-ingest-press = "jobs.ingest_press_content:main"
+sports-context-ingest-match = "jobs.ingest_match_data:main"
 
 # Run the MCP server: cd sports-context-mcp && python server.py
 # (stdio transport — register in claude_desktop_config.json or via mcp install)

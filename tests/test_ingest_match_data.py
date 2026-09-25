@@ -8,12 +8,15 @@ delta filtering, partial failure handling, and the full run() orchestration.
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from jobs.ingest_match_data import (
     _get_last_kickoff,
     _parse_dt,
     _upsert_new_fixtures,
     delta_write,
     fetch_fpl_data,
+    main,
     run,
 )
 
@@ -293,3 +296,22 @@ def test_run_dry_run_still_fetches():
         run(dry_run=True)
 
     mock_fpl.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Failure signalling (exit codes)
+# ---------------------------------------------------------------------------
+
+
+def test_run_returns_false_when_fetch_fails():
+    """A failed FPL fetch makes run() report failure rather than silent success."""
+    with patch("jobs.ingest_match_data.fetch_fpl_data", side_effect=RuntimeError("boom")):
+        assert run() is False
+
+
+def test_main_exits_nonzero_on_failure():
+    """The CLI entry point exits 1 when the job fails."""
+    with patch("jobs.ingest_match_data.run", return_value=False):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    assert exc.value.code == 1

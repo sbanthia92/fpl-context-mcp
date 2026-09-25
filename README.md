@@ -204,9 +204,51 @@ Adjust the match-data cadence to the calendar:
 | World Cup / tournament knockout | Every 6 hours, `0 */6 * * *` |
 | Off-season | Once daily, `0 8 * * *` |
 
-### Option B — fork this repo and use its GitHub Actions workflows
+### Option B — GitHub Actions in your own private repo (free, no server needed)
 
-[`.github/workflows/ingest_press_content.yml`](.github/workflows/ingest_press_content.yml) and [`.github/workflows/ingest_match_data.yml`](.github/workflows/ingest_match_data.yml) already implement the schedules above. **Note:** these only run inside *this* repository's own GitHub Actions, using secrets configured on `sbanthia92/sports-context-mcp` — installing the package from PyPI does **not** give you these automatically. To use them yourself: fork the repo, add `PINECONE_API_KEY`, `PINECONE_INDEX_NAME`, `GUARDIAN_API_KEY`, `DATABASE_URL`, and `DATABASE_ETL_URL` as repo secrets ([Settings → Secrets and variables → Actions](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions)), and the workflows run on your fork's own schedule.
+Best if you don't have a machine that's always on. You don't fork this project — you create a tiny repo of your own with one file that installs the package from PyPI and runs the two commands on a schedule.
+
+1. Create a new **private** GitHub repository (any name).
+2. Add this file as `.github/workflows/ingest.yml`:
+
+   ```yaml
+   name: Ingest sports data
+
+   on:
+     schedule:
+       - cron: "0 6,22 * * *" # twice daily, UTC
+     workflow_dispatch: {} # lets you run it by hand from the Actions tab
+
+   jobs:
+     ingest:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/setup-python@v5
+           with:
+             python-version: "3.11"
+         - run: pip install sports-context-mcp
+         - name: Ingest press content
+           run: sports-context-ingest-press
+           env:
+             PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+             PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
+             GUARDIAN_API_KEY: ${{ secrets.GUARDIAN_API_KEY }}
+         - name: Ingest match data
+           run: sports-context-ingest-match
+           env:
+             DATABASE_URL: ${{ secrets.DATABASE_URL }}
+             DATABASE_ETL_URL: ${{ secrets.DATABASE_ETL_URL }}
+   ```
+
+3. In that repo: **Settings → Secrets and variables → Actions → New repository secret**, and add `PINECONE_API_KEY`, `DATABASE_URL`, and `DATABASE_ETL_URL`. `PINECONE_INDEX_NAME` and `GUARDIAN_API_KEY` are optional — leave them out and the defaults (`the-gaffer`, and the free `test` Guardian key) apply.
+4. Open the **Actions** tab, pick "Ingest sports data", and click **Run workflow** once to seed your data. From then on it runs by itself on the schedule.
+
+Notes:
+
+- **A failed run turns red** and GitHub emails you (missing credentials, a database that's unreachable, an API outage), so you'll know if data stops flowing.
+- **Updates:** `pip install sports-context-mcp` grabs the latest release on every run, so fixes arrive automatically. Pin a version (`sports-context-mcp==0.3.0`) if you'd rather upgrade on purpose.
+- **Cost:** each run takes about a minute or two, so a twice-daily schedule stays well inside GitHub's free monthly minutes for private repos.
+- **Why private:** GitHub automatically pauses scheduled workflows in *public* repos after 60 days without a commit. Private repos aren't paused.
 
 ### Option C — any other scheduler
 
