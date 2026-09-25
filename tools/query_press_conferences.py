@@ -5,7 +5,7 @@ Semantic search over the 'press' Pinecone namespace, which holds Premier League
 press conference summaries, match reports, and player injury/availability news
 ingested by jobs/ingest_press_content.py.
 
-Mirrors the retrieval logic in the Gaffer's server/rag.py exactly:
+Retrieval logic:
   - Embeds the query with multilingual-e5-large via Pinecone built-in inference
   - Re-ranks results by applying a recency score multiplier
   - Returns a formatted string ready to inject into a model context
@@ -23,10 +23,22 @@ log = logging.getLogger(__name__)
 _EMBED_MODEL = "multilingual-e5-large"
 _NAMESPACE = "press"
 
+# Each result's text is cut to this many characters so long articles don't flood the
+# response. The URL (when stored) is included so the full piece can be opened.
+_MAX_SNIPPET_CHARS = 1500
+
 
 def _build_client() -> Pinecone:
     """Instantiate and return a Pinecone client using the configured API key."""
     return Pinecone(api_key=cfg.pinecone_api_key)
+
+
+def _snippet(text: str, limit: int = _MAX_SNIPPET_CHARS) -> str:
+    """Cut ``text`` to about ``limit`` characters at a word boundary, adding an ellipsis."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(None, 1)[0] + "…"
 
 
 def _format_results(weighted: list[tuple[float, object]]) -> str:
@@ -37,12 +49,14 @@ def _format_results(weighted: list[tuple[float, object]]) -> str:
         weighted: List of (final_score, match) tuples, already sorted descending.
 
     Returns:
-        Newline-separated document blocks with rank, type, date, score, and text.
+        Newline-separated document blocks with rank, type, date, score, a text snippet
+        (capped at _MAX_SNIPPET_CHARS) and the source URL when available.
     """
     parts = []
     for rank, (score, match) in enumerate(weighted, start=1):
         meta = match.metadata or {}
-        text = meta.get("text", "")
+        text = _snippet(meta.get("text", ""))
+        url = meta.get("url", "")
         doc_type = meta.get("type", "unknown")
         date = meta.get("date", "")
 
@@ -51,7 +65,10 @@ def _format_results(weighted: list[tuple[float, object]]) -> str:
             header += f" | {date}"
         header += f" | relevance: {score:.3f}"
 
-        parts.append(f"{header}\n{text}")
+        block = f"{header}\n{text}"
+        if url:
+            block += f"\nURL: {url}"
+        parts.append(block)
 
     return "\n\n".join(parts)
 

@@ -54,17 +54,17 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# Pinecone settings — must match what the Gaffer server/rag.py expects.
+# Pinecone settings — the query tool (tools/query_press_conferences.py) must use the same ones.
 _NAMESPACE = "press"
-_EMBED_DIM = 1024  # multilingual-e5-large output dimension
 _EMBED_MODEL = "multilingual-e5-large"
 _UPSERT_BATCH = 96  # Pinecone recommended batch size for this model
+_SCAN_BATCH = 100  # ids fetched per request when scanning for stale docs
 
 _FPL_BOOTSTRAP_URL = "https://fantasy.premierleague.com/api/bootstrap-static/"
 _POSITION_MAP = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
 
 # Articles older than this are deleted from Pinecone after each run to stay
-# within index quota. Must match the filter used in the Gaffer's existing cleanup.
+# within index quota.
 _MAX_PRESS_AGE_DAYS = 14
 
 # Documents newer than this are eligible for ingestion.
@@ -436,7 +436,7 @@ def _fetch_player_news_docs(
     Only players with a non-empty 'news' field are included. Each player has ONE
     document with a stable ID (derived from the FPL player id), so a changed
     injury overwrites the previous text in place. Every doc is stamped with
-    ``refreshed_at`` so _cleanup_stale_player_news can delete docs for players whose
+    ``refreshed_at`` so _cleanup_stale_docs can delete docs for players whose
     news FPL has since cleared.
 
     Args:
@@ -527,70 +527,99 @@ def _existing_ids(index, ids: list[str]) -> set[str]:
     return existing
 
 
-def _cleanup_stale_press(index) -> None:
+def _doc_timestamp(meta: dict) -> float | None:
     """
-    Delete press articles older than _MAX_PRESS_AGE_DAYS from Pinecone.
+    Best-effort publication time (Unix seconds) for a stored press article.
 
-    Uses a metadata filter on pub_timestamp so only press_article documents are
-    affected — player_news documents are not deleted by this call.
+    Prefers ``pub_timestamp``; falls back to parsing ``date`` (RFC 2822 or ISO 8601) for
+    older documents that were stored without it. Returns None if neither is usable.
+    """
+    ts = meta.get("pub_timestamp")
+    if isinstance(ts, int | float) and ts > 0:
+        return float(ts)
+    date = meta.get("date")
+    if not isinstance(date, str) or not date:
+        return None
+    for parse in (
+        parsedate_to_datetime,
+        lambda d: datetime.fromisoformat(d.replace("Z", "+00:00")),
+    ):
+        try:
+            dt = parse(date)
+        except (TypeError, ValueError):
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.timestamp()
+    return None
+
+
+def _find_stale_ids(
+    index, cutoff: float, run_started: float, prune_player_news: bool
+) -> tuple[list[str], list[str]]:
+    """
+    Scan every document in the namespace and return (stale_press_ids, stale_news_ids).
+
+    Reads all documents' metadata (ids are listed page by page, then fetched), rather
+    than relying on a metadata filter, so documents written by older versions — which may
+    lack ``pub_timestamp`` or ``refreshed_at`` — are still recognised as stale.
+
+    * press_article: stale if older than ``cutoff`` (or its age can't be determined).
+    * player_news:   stale if not refreshed by this run (only when ``prune_player_news``).
+    * any other type is left alone.
+
+    Note: ``Index.list`` requires a serverless Pinecone index.
+    """
+    stale_press: list[str] = []
+    stale_news: list[str] = []
+    for ids in index.list(namespace=_NAMESPACE):
+        ids = list(ids)
+        for start in range(0, len(ids), _SCAN_BATCH):
+            batch = ids[start : start + _SCAN_BATCH]
+            for doc_id, vec in index.fetch(ids=batch, namespace=_NAMESPACE).vectors.items():
+                meta = getattr(vec, "metadata", None) or {}
+                doc_type = meta.get("type")
+                if doc_type == "press_article":
+                    ts = _doc_timestamp(meta)
+                    if ts is None or ts < cutoff:
+                        stale_press.append(doc_id)
+                elif doc_type == "player_news" and prune_player_news:
+                    if meta.get("refreshed_at", 0) < run_started:
+                        stale_news.append(doc_id)
+    return stale_press, stale_news
+
+
+def _cleanup_stale_docs(index, run_started: float, prune_player_news: bool) -> int:
+    """
+    Delete outdated documents from the namespace. Best-effort: failures are logged.
+
+    Removes press articles older than _MAX_PRESS_AGE_DAYS and, when ``prune_player_news``
+    is True, player-news docs that this run did not refresh (news FPL has cleared).
 
     Args:
-        index: Pinecone Index object.
+        index:             Pinecone Index object.
+        run_started:       Unix timestamp taken at the start of the current run.
+        prune_player_news: False when the FPL news fetch returned nothing, so an API outage
+                           can't wipe every injury doc.
+
+    Returns:
+        Number of documents deleted (0 on failure).
     """
     cutoff = time.time() - _MAX_PRESS_AGE_DAYS * 86400
     try:
-        index.delete(
-            filter={
-                "type": {"$eq": "press_article"},
-                "pub_timestamp": {"$lt": cutoff},
-            },
-            namespace=_NAMESPACE,
-        )
+        stale_press, stale_news = _find_stale_ids(index, cutoff, run_started, prune_player_news)
+        stale = stale_press + stale_news
+        for start in range(0, len(stale), 1000):
+            index.delete(ids=stale[start : start + 1000], namespace=_NAMESPACE)
         log.info(
-            "Deleted press articles older than %d days (cutoff: %.0f).",
+            "Deleted %d press articles older than %d days and %d outdated player news docs.",
+            len(stale_press),
             _MAX_PRESS_AGE_DAYS,
-            cutoff,
+            len(stale_news),
         )
+        return len(stale)
     except Exception as exc:
-        # Non-fatal: stale cleanup is best-effort.
-        log.warning("Stale press cleanup skipped: %s", exc)
-
-
-def _cleanup_stale_player_news(index, run_started: float) -> int:
-    """
-    Delete player_news docs that were not refreshed by the current run.
-
-    A player whose news FPL has cleared (e.g. back from injury) no longer gets a
-    doc, so their old one keeps its previous ``refreshed_at`` and is removed here.
-    Docs written before ``refreshed_at`` existed count as stale too.
-
-    Selects by metadata query rather than a delete filter so docs missing the
-    field are handled without relying on ``$exists`` support.
-
-    Args:
-        index:       Pinecone Index object.
-        run_started: Unix timestamp taken at the start of the current run.
-
-    Returns:
-        Number of docs deleted (0 on failure — cleanup is best-effort).
-    """
-    try:
-        resp = index.query(
-            vector=[1.0] + [0.0] * (_EMBED_DIM - 1),
-            top_k=1000,
-            namespace=_NAMESPACE,
-            filter={"type": {"$eq": "player_news"}},
-            include_metadata=True,
-        )
-        stale_ids = [
-            m.id for m in resp.matches if (m.metadata or {}).get("refreshed_at", 0) < run_started
-        ]
-        for start in range(0, len(stale_ids), 1000):
-            index.delete(ids=stale_ids[start : start + 1000], namespace=_NAMESPACE)
-        log.info("Deleted %d outdated player news docs.", len(stale_ids))
-        return len(stale_ids)
-    except Exception as exc:
-        log.warning("Stale player news cleanup skipped: %s", exc)
+        log.warning("Stale document cleanup skipped: %s", exc)
         return 0
 
 
@@ -761,17 +790,13 @@ def run(dry_run: bool = False) -> bool:
         log.info("Upserting %d player news docs (overwrite)...", len(player_news_docs))
         total += _upsert(pc, index, player_news_docs, always_upsert=True)
 
-    # Step 5: Clean up stale press articles.
-    log.info("Cleaning up stale press articles (>%d days old)...", _MAX_PRESS_AGE_DAYS)
-    _cleanup_stale_press(index)
-
-    # Only prune player news after a successful fetch + upsert. An empty result
-    # means the FPL fetch failed (or nobody has news), so keep what we have rather
-    # than wiping every injury doc during an API outage.
-    if player_news_docs:
-        _cleanup_stale_player_news(index, run_started)
-    else:
+    # Step 5: Delete outdated docs. Player news is only pruned after a successful fetch +
+    # upsert: an empty result means the FPL fetch failed (or nobody has news), so keep
+    # what we have rather than wiping every injury doc during an API outage.
+    if not player_news_docs:
         log.warning("No player news fetched — skipping player news cleanup.")
+    log.info("Cleaning up outdated documents...")
+    _cleanup_stale_docs(index, run_started, prune_player_news=bool(player_news_docs))
 
     log.info(
         "Press content ingestion complete. %d documents upserted to namespace '%s'.",

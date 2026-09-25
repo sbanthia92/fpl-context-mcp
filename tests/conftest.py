@@ -18,6 +18,6 @@ def set_env(monkeypatch):
     """
     monkeypatch.setenv("PINECONE_API_KEY", "test-pinecone-key")
     monkeypatch.setenv("PINECONE_INDEX_NAME", "test-index")
-    monkeypatch.setenv("DATABASE_URL", "postgresql://readonly:pass@localhost/gaffer")
-    monkeypatch.setenv("DATABASE_ETL_URL", "postgresql://etl:pass@localhost/gaffer")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://readonly:pass@localhost/fpl")
+    monkeypatch.setenv("DATABASE_ETL_URL", "postgresql://etl:pass@localhost/fpl")
     monkeypatch.setenv("GUARDIAN_API_KEY", "test-guardian-key")

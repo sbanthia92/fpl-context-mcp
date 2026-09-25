@@ -3,7 +3,7 @@ fpl-context-mcp — MCP server entry point.
 
 Exposes two tools over the MCP stdio transport:
 
-  query_historical_stats   — read-only SQL against the Gaffer PostgreSQL database
+  query_historical_stats   — read-only SQL against the FPL PostgreSQL database
   query_press_conferences  — semantic search over the Pinecone 'press' namespace
 
 Run locally:
@@ -141,7 +141,7 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="query_historical_stats",
             description=(
-                "Execute a read-only SQL SELECT against the Gaffer historical sports "
+                "Execute a read-only SQL SELECT against the FPL stats "
                 "database. Use this to answer questions about player stats, fixtures, "
                 "team strength, or gameweek history for the seasons in the database.\n\n"
                 + SCHEMA_DESCRIPTION

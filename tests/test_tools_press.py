@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tools.query_press_conferences import query_press_conferences
+from tools.query_press_conferences import _MAX_SNIPPET_CHARS, _snippet, query_press_conferences
 
 
 def _make_match(score: float, text: str, recency_score: float = 0.8) -> MagicMock:
@@ -150,3 +150,40 @@ async def test_dry_run_returns_summary_without_pinecone_call(monkeypatch):
     assert "injury news" in result
     assert "top_k=3" in result
     MockPC.assert_not_called()
+
+
+def test_snippet_leaves_short_text_and_cuts_long_text_at_a_word():
+    """Short text is unchanged; long text is cut near the limit at a word boundary."""
+    assert _snippet("  short text ") == "short text"
+
+    long_text = "word " * 1000
+    cut = _snippet(long_text)
+    assert len(cut) <= _MAX_SNIPPET_CHARS + 1
+    assert cut.endswith("…")
+    assert not cut[:-1].endswith("wor")  # not cut mid-word
+
+
+@pytest.mark.asyncio
+async def test_long_documents_are_truncated_and_url_is_included(mock_pinecone):
+    """A very long article is capped, and its source URL is appended for citing."""
+    _, index = mock_pinecone
+    match = _make_match(0.9, "Headline\n" + "long body " * 2000)
+    match.metadata["url"] = "https://example.com/article"
+    index.query.return_value.matches = [match]
+
+    result = await query_press_conferences("anything")
+
+    assert len(result) < _MAX_SNIPPET_CHARS + 400
+    assert "…" in result
+    assert result.rstrip().endswith("URL: https://example.com/article")
+
+
+@pytest.mark.asyncio
+async def test_documents_without_url_have_no_url_line(mock_pinecone):
+    """Player news has no URL, so no URL line is added."""
+    _, index = mock_pinecone
+    index.query.return_value.matches = [_make_match(0.9, "Injury news")]
+
+    result = await query_press_conferences("injury")
+
+    assert "URL:" not in result

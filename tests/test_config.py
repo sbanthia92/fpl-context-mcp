@@ -13,10 +13,10 @@ def test_reads_pinecone_api_key(monkeypatch):
 
 
 def test_pinecone_index_name_default(monkeypatch):
-    """PINECONE_INDEX_NAME defaults to 'the-gaffer' when unset."""
+    """PINECONE_INDEX_NAME defaults to 'fpl-context' when unset."""
     monkeypatch.delenv("PINECONE_INDEX_NAME", raising=False)
     c = _Config()
-    assert c.pinecone_index_name == "the-gaffer"
+    assert c.pinecone_index_name == "fpl-context"
 
 
 def test_pinecone_index_name_override(monkeypatch):
@@ -58,7 +58,7 @@ def test_registered_guardian_key_is_returned(monkeypatch):
 def test_empty_pinecone_index_name_falls_back_to_default(monkeypatch):
     """An empty PINECONE_INDEX_NAME falls back to the default index name."""
     monkeypatch.setenv("PINECONE_INDEX_NAME", "")
-    assert _Config().pinecone_index_name == "the-gaffer"
+    assert _Config().pinecone_index_name == "fpl-context"
 
 
 def test_missing_pinecone_key_returns_empty_string(monkeypatch):

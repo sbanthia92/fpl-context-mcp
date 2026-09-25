@@ -4,8 +4,7 @@ Standalone MCP server that exposes Premier League sports stats and press-confere
 RAG as MCP tools, plus threaded ingestion jobs that keep the underlying PostgreSQL
 and Pinecone stores up to date.
 
-Designed to be registered in Claude Desktop or any MCP-compatible host. When
-extracted from the Gaffer monorepo it becomes a fully independent service.
+Designed to be registered in Claude Desktop or any MCP-compatible host.
 
 ## Stack
 - **Language**: Python 3.11+
@@ -18,7 +17,7 @@ extracted from the Gaffer monorepo it becomes a fully independent service.
 ## Package structure
 ```
 fpl-context-mcp/
-  config.py                        # Env-var config (same var names as the Gaffer)
+  config.py                        # Env-var config
   server.py                        # MCP server entry point (stdio transport)
   tools/
     query_historical_stats.py      # MCP tool: read-only SQL → PostgreSQL
@@ -86,9 +85,9 @@ loaded automatically by `config.py` when `python-dotenv` is installed.
 | Variable            | Required | Default      | Purpose |
 |---------------------|----------|--------------|---------|
 | `PINECONE_API_KEY`  | Yes      | —            | Pinecone API key |
-| `PINECONE_INDEX_NAME` | No     | `the-gaffer` | Pinecone index name |
-| `DATABASE_URL`      | Yes*     | —            | Read-only PostgreSQL DSN (`gaffer_readonly` user) |
-| `DATABASE_ETL_URL`  | Yes*     | —            | Read/write PostgreSQL DSN (`gaffer_etl` user). Falls back to `DATABASE_URL`. |
+| `PINECONE_INDEX_NAME` | No     | `fpl-context` | Pinecone index name |
+| `DATABASE_URL`      | Yes*     | —            | Read-only PostgreSQL DSN (`fpl_readonly` user) |
+| `DATABASE_ETL_URL`  | Yes*     | —            | Read/write PostgreSQL DSN (`fpl_etl` user). Falls back to `DATABASE_URL`. |
 | `GUARDIAN_API_KEY`  | No       | (empty)      | Guardian open platform key. Register free at open-platform.theguardian.com. Without it the Guardian source is skipped (BBC only). |
 
 *Required for the respective tool/job to function; the package will start without them
@@ -111,7 +110,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ## MCP tools exposed
 
 ### `query_historical_stats`
-Executes a read-only SQL SELECT against the Gaffer PostgreSQL database.
+Executes a read-only SQL SELECT against the FPL PostgreSQL database.
 - Blocks mutation keywords (INSERT/UPDATE/DELETE/DROP etc.)
 - 10-second statement timeout
 - 100-row result cap
@@ -119,8 +118,8 @@ Executes a read-only SQL SELECT against the Gaffer PostgreSQL database.
 
 ### `query_press_conferences`
 Semantic search over the Pinecone `press` namespace (BBC Sport + Guardian articles,
-FPL player injury updates). Applies recency-weighted re-ranking identical to the
-Gaffer's `server/rag.py`.
+FPL player injury updates). Applies recency-weighted re-ranking and returns a
+length-capped snippet per document.
 
 ## Ingestion jobs
 

@@ -1,11 +1,9 @@
 """
 Configuration for fpl-context-mcp.
 
-Reads from environment variables. Intentionally uses the same variable names as
-the Gaffer server so a single .env file at the repo root covers both packages.
-
-python-dotenv is loaded first so the .env two levels up (the Gaffer repo root)
-is picked up automatically during local development. In CI / production, the
+Reads from environment variables. python-dotenv is loaded first so a .env file in
+the project directory (or its parent) is picked up automatically during local
+development. In CI / production, the
 variables are injected directly into the environment by the workflow or secrets
 manager, and dotenv is a no-op.
 """
@@ -16,8 +14,7 @@ from pathlib import Path
 try:
     from dotenv import load_dotenv
 
-    # Walk up to find the nearest .env — works whether running from within
-    # fpl-context-mcp/ or from the Gaffer repo root.
+    # Use the nearest .env: this directory first, then its parent.
     _here = Path(__file__).resolve().parent
     for _candidate in [_here / ".env", _here.parent / ".env"]:
         if _candidate.exists():
@@ -43,13 +40,13 @@ class _Config:
 
     @property
     def pinecone_index_name(self) -> str:
-        """Pinecone index name. Must match the index created in the Gaffer setup."""
-        return os.getenv("PINECONE_INDEX_NAME") or "the-gaffer"
+        """Pinecone index name. Defaults to 'fpl-context'; override with PINECONE_INDEX_NAME."""
+        return os.getenv("PINECONE_INDEX_NAME") or "fpl-context"
 
     @property
     def database_url(self) -> str:
         """
-        Read-only PostgreSQL connection string (gaffer_readonly user).
+        Read-only PostgreSQL connection string (fpl_readonly user).
         Used by the MCP query_historical_stats tool.
         Format: postgresql://user:pass@host:5432/dbname
         """
@@ -58,7 +55,7 @@ class _Config:
     @property
     def database_etl_url(self) -> str:
         """
-        Read/write PostgreSQL connection string (gaffer_etl user).
+        Read/write PostgreSQL connection string (fpl_etl user).
         Used by ingest_match_data to write fixture and player stats rows.
         Falls back to DATABASE_URL if not set.
         """
