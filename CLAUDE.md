@@ -46,7 +46,8 @@ fpl-context-mcp/
     ingest_press_content.yml       # Nightly press ingestion (this repo's own data, not customers')
     ingest_match_data.yml          # Configurable match data ingestion (this repo's own data, not customers')
     backfill_history.yml           # Manual (workflow_dispatch) past-season backfill
-    publish.yml                    # On v*.*.* tags: PyPI (Trusted Publishing), then MCP Registry (GitHub OIDC)
+    ci.yml                         # ruff + pytest on Python 3.11–3.13 for pushes to main and PRs
+    publish.yml                    # On v*.*.* tags: PyPI (Trusted Publishing), then GitHub Release (CHANGELOG notes) + MCP Registry (GitHub OIDC)
   glama.json                       # Glama directory ownership claim (maintainers)
   server.json                      # MCP Registry metadata (version rewritten from the tag at publish time)
 ```
