@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-09-26
+
+### Changed
+
+- **README: clearer client support.** The intro no longer lists ChatGPT alongside
+  local clients as if it worked the same way. It now says the server runs locally
+  in Claude Desktop/Code, Cursor, VS Code Copilot, Windsurf, Gemini CLI and Codex,
+  and that ChatGPT and other URL-only clients need the server hosted over HTTP.
+  Documentation only.
+
 ## [0.6.2] — 2026-09-25
 
 ### Added
