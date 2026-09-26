@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.sbanthia92/fpl-context-mcp -->
 
-An [MCP](https://modelcontextprotocol.io) server that gives any MCP-capable AI agent (Claude, ChatGPT, Gemini CLI, Codex, Cursor, VS Code Copilot and others) two tools for answering Fantasy Premier League (FPL) and Premier League football questions:
+An [MCP](https://modelcontextprotocol.io) server that gives any MCP-capable AI agent two tools for answering Fantasy Premier League (FPL) and Premier League football questions. It runs locally in Claude Desktop, Claude Code, Cursor, VS Code Copilot, Windsurf, Gemini CLI and Codex; ChatGPT and other clients that only accept a URL can connect when you [host it over HTTP](#remote-access-over-http-chatgpt-and-other-url-only-clients).
 
 | Tool | What it does |
 |---|---|
