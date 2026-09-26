@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-09-25
+
+### Added
+
+- **CI workflow** (`ci.yml`): ruff lint/format check and the test suite on
+  Python 3.11–3.13 for every push to `main` and every pull request.
+- **GitHub Releases.** Each `v*.*.*` tag now also creates a GitHub Release with
+  the built sdist/wheel attached and that version's CHANGELOG section as notes.
+  No package code changes.
+
 ## [0.6.1] — 2026-09-25
 
 ### Added
