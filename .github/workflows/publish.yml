@@ -1,5 +1,8 @@
 name: Publish to PyPI
 
+# Publishes the package to PyPI, then lists that version in the official MCP
+# Registry (registry.modelcontextprotocol.io) from server.json.
+#
 # Triggered by pushing a version tag, e.g.:
 #   git tag v0.3.0 && git push origin v0.3.0
 # Or manually via workflow_dispatch for a dry-run build check.
@@ -53,3 +56,43 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  mcp-registry:
+    name: Publish to MCP Registry
+    needs: publish
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      # GitHub OIDC login grants the io.github.sbanthia92/* namespace — no secret needed.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Set server.json version from tag
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.tmp
+          mv server.tmp server.json
+
+      # The registry checks that the PyPI release exists and that its README
+      # carries the `mcp-name:` marker, so PyPI's CDN must have the new version.
+      - name: Wait for PyPI to serve the release
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          for i in $(seq 1 30); do
+            curl -sf "https://pypi.org/pypi/fpl-context-mcp/$VERSION/json" > /dev/null && exit 0
+            sleep 10
+          done
+          echo "fpl-context-mcp $VERSION not visible on PyPI after 5 minutes" >&2
+          exit 1
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish

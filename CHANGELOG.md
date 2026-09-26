@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-25
+
+### Added
+
+- **HTTP transport for URL-only clients.** `fpl-context-mcp --transport http`
+  serves MCP over streamable HTTP at `/mcp` (plus an unauthenticated `/health`),
+  so ChatGPT connectors, claude.ai custom connectors and other clients that can't
+  launch a local process can use the server. Stateless, so it can run behind a
+  load balancer. `--host` (default `127.0.0.1`) and `--port` (default `8000`) can
+  also come from `MCP_HOST` / `MCP_PORT` / `PORT`, and `--transport` from
+  `MCP_TRANSPORT`. stdio remains the default.
+- **`MCP_AUTH_TOKEN`.** When set, HTTP requests to `/mcp` need
+  `Authorization: Bearer <token>`. The server warns at startup when bound to a
+  non-local address without one.
+- **MCP Registry listing.** `server.json` describes the server for the official
+  MCP Registry, the README carries the `mcp-name` ownership marker, and the
+  publish workflow lists each tagged release there after it reaches PyPI.
+- **README: setup for other AI clients** (Claude Code, Cursor, VS Code, Windsurf,
+  Gemini CLI, Codex CLI, ChatGPT), a **data sources and disclaimer** section
+  (no affiliation with the Premier League, FPL, BBC or Guardian; users must
+  follow each source's terms), and a License section.
+
+### Changed
+
+- The server now reports its own package version in `serverInfo` instead of the
+  MCP SDK's version.
+- Minimum `mcp` version raised to 1.8.0 (first release with streamable HTTP).
+
 ## [0.5.1] — 2026-09-25
 
 ### Fixed

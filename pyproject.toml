@@ -1,14 +1,14 @@
 [project]
 name = "fpl-context-mcp"
-version = "0.5.1"
-description = "MCP server that gives Claude Fantasy Premier League stats and press/injury news search, with ingestion jobs that keep PostgreSQL and Pinecone up to date."
+version = "0.6.0"
+description = "MCP server that gives any AI agent Fantasy Premier League stats and press/injury news search, with ingestion jobs that keep PostgreSQL and Pinecone up to date."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
     { name = "Shubham Banthia", email = "sbanthia92@gmail.com" },
 ]
-keywords = ["mcp", "model-context-protocol", "fantasy-premier-league", "fpl", "sports", "rag"]
+keywords = ["mcp", "model-context-protocol", "fantasy-premier-league", "fpl", "sports", "rag", "chatgpt", "claude", "gemini"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -19,10 +19,11 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    # MCP server framework (stdio transport). Pinned below 2.0 — server.py uses
+    # MCP server framework (stdio + streamable HTTP transports; streamable HTTP
+    # needs >=1.8, and uvicorn/starlette come with it). Pinned below 2.0 — server.py uses
     # the mcp 1.x low-level Server decorator API (@server.list_tools() etc.),
     # which mcp 2.x removed/rewrote entirely.
-    "mcp>=1.0.0,<2.0.0",
+    "mcp>=1.8.0,<2.0.0",
     # Pinecone vector store — used by the MCP tool and the press ingestion job
     "pinecone>=5.0.0",
     # Async PostgreSQL client — used by the MCP query tool (server is async)

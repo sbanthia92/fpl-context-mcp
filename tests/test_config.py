@@ -85,3 +85,15 @@ def test_dry_run_false_string(monkeypatch):
     """DRY_RUN=false is not truthy."""
     monkeypatch.setenv("DRY_RUN", "false")
     assert _Config().dry_run is False
+
+
+def test_mcp_auth_token_default_empty(monkeypatch):
+    """MCP_AUTH_TOKEN defaults to empty (HTTP endpoint unauthenticated)."""
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    assert _Config().mcp_auth_token == ""
+
+
+def test_mcp_auth_token_reads_env(monkeypatch):
+    """MCP_AUTH_TOKEN is read from the environment."""
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "s3cret")
+    assert _Config().mcp_auth_token == "s3cret"

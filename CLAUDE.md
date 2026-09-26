@@ -4,11 +4,14 @@ Standalone MCP server that exposes Premier League sports stats and press-confere
 RAG as MCP tools, plus threaded ingestion jobs that keep the underlying PostgreSQL
 and Pinecone stores up to date.
 
-Designed to be registered in Claude Desktop or any MCP-compatible host.
+Works with any MCP-compatible host: stdio (default) for local clients (Claude Desktop/Code,
+Cursor, VS Code, Gemini CLI, Codex), or `--transport http` (streamable HTTP at `/mcp`) for
+URL-only clients such as ChatGPT connectors. Listed in the official MCP Registry as
+`io.github.sbanthia92/fpl-context-mcp`.
 
 ## Stack
 - **Language**: Python 3.11+
-- **MCP framework**: `mcp` Python SDK (stdio transport)
+- **MCP framework**: `mcp` Python SDK (stdio transport; streamable HTTP via `StreamableHTTPSessionManager` + uvicorn, stateless)
 - **Vector store**: Pinecone (`multilingual-e5-large` built-in inference, namespace `press`)
 - **Database**: PostgreSQL (read-only for MCP tools, read/write for ingestion jobs)
 - **HTTP**: `requests` (sync, used by jobs) + `asyncpg` (async, used by MCP tools)
@@ -43,7 +46,8 @@ fpl-context-mcp/
     ingest_press_content.yml       # Nightly press ingestion (this repo's own data, not customers')
     ingest_match_data.yml          # Configurable match data ingestion (this repo's own data, not customers')
     backfill_history.yml           # Manual (workflow_dispatch) past-season backfill
-    publish.yml                    # Build + publish to PyPI via Trusted Publishing on v*.*.* tags
+    publish.yml                    # On v*.*.* tags: PyPI (Trusted Publishing), then MCP Registry (GitHub OIDC)
+  server.json                      # MCP Registry metadata (version rewritten from the tag at publish time)
 ```
 
 Installed CLI entry points (`[project.scripts]` in `pyproject.toml`): `fpl-context-mcp`
@@ -70,6 +74,8 @@ pytest tests/ -v
 
 # Run the MCP server locally (stdio — wire into claude_desktop_config.json)
 python server.py
+# ...or over HTTP at http://127.0.0.1:8000/mcp
+python server.py --transport http
 
 # Run ingestion jobs manually
 python -m jobs.ingest_press_content
@@ -89,6 +95,8 @@ loaded automatically by `config.py` when `python-dotenv` is installed.
 | `DATABASE_URL`      | Yes*     | —            | Read-only PostgreSQL DSN (`fpl_readonly` user) |
 | `DATABASE_ETL_URL`  | Yes*     | —            | Read/write PostgreSQL DSN (`fpl_etl` user). Falls back to `DATABASE_URL`. |
 | `GUARDIAN_API_KEY`  | No       | (empty)      | Guardian open platform key. Register free at open-platform.theguardian.com. Without it the Guardian source is skipped (BBC only). |
+| `MCP_AUTH_TOKEN`    | No       | (empty)      | HTTP transport only: require `Authorization: Bearer <token>` on `/mcp`. |
+| `MCP_TRANSPORT` / `MCP_HOST` / `MCP_PORT` (or `PORT`) | No | `stdio` / `127.0.0.1` / `8000` | Defaults for `--transport` / `--host` / `--port`. |
 
 *Required for the respective tool/job to function; the package will start without them
 and log an error on first use.
@@ -164,14 +172,14 @@ writes nothing — results and stats silently freeze. The delta belongs on *stat
 Documents upserted to the `press` namespace carry this metadata:
 ```python
 {
-    "text": str,           # Full document text (embedded)
+    "text": str,  # Full document text (embedded)
     "type": "press_article" | "player_news",
-    "source": str,         # "BBC Sport" | "The Guardian" | "FPL"
-    "date": str,           # RFC 2822 or ISO 8601
-    "pub_timestamp": float, # Unix timestamp — used for stale-doc deletion
-    "recency_score": float, # 1.0 (today) → 0.1 (14 days) — used for re-ranking
+    "source": str,  # "BBC Sport" | "The Guardian" | "FPL"
+    "date": str,  # RFC 2822 or ISO 8601
+    "pub_timestamp": float,  # Unix timestamp — used for stale-doc deletion
+    "recency_score": float,  # 1.0 (today) → 0.1 (14 days) — used for re-ranking
     "refreshed_at": float,  # player_news only — run timestamp, used to prune cleared news
-    "url": str,            # press_article only
+    "url": str,  # press_article only
 }
 ```
 
@@ -193,6 +201,11 @@ Documents upserted to the `press` namespace carry this metadata:
 - `docs:` — documentation only
 
 ## Known gotchas
+- **MCP Registry ownership marker**: the `<!-- mcp-name: io.github.sbanthia92/fpl-context-mcp -->`
+  line at the top of README.md is how the registry verifies the PyPI package. Don't remove it,
+  and keep it matching `name` in `server.json`.
+- **HTTP `/mcp` route**: it's a Starlette `Route` with an ASGI class instance, not a `Mount` —
+  `Mount` 307-redirects `/mcp` to `/mcp/`, which some clients don't follow.
 - **Guardian API key required**: the public `test` key now returns HTTP 401, so the Guardian
   fetcher is skipped unless `GUARDIAN_API_KEY` is a registered key (free). BBC still ingests.
 - **Pinecone inference rate limits**: the 8-second sleep between embed batches in `_upsert`

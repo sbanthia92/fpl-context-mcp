@@ -1,0 +1,46 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.sbanthia92/fpl-context-mcp",
+  "title": "FPL Context",
+  "description": "Fantasy Premier League stats (SQL) and BBC/Guardian press and injury news search for AI agents.",
+  "repository": {
+    "url": "https://github.com/sbanthia92/fpl-context-mcp",
+    "source": "github"
+  },
+  "version": "0.6.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "fpl-context-mcp",
+      "version": "0.6.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "DATABASE_URL",
+          "description": "Read-only PostgreSQL DSN for your FPL stats database (populate it with fpl-context-ingest-match)",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "PINECONE_API_KEY",
+          "description": "Pinecone API key for your press index (populate it with fpl-context-ingest-press)",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "PINECONE_INDEX_NAME",
+          "description": "Pinecone index name",
+          "isRequired": false,
+          "default": "fpl-context",
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

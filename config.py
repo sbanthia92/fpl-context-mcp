@@ -83,6 +83,18 @@ class _Config:
         """
         return os.getenv("DRY_RUN", "").lower() in ("1", "true", "yes")
 
+    @property
+    def mcp_auth_token(self) -> str:
+        """
+        Shared secret for the HTTP transport (``--transport http``).
+
+        When set, every request to the HTTP endpoint must carry
+        ``Authorization: Bearer <token>``. Empty by default, which leaves the
+        endpoint open — only acceptable when bound to localhost. Ignored by the
+        stdio transport.
+        """
+        return os.getenv("MCP_AUTH_TOKEN", "")
+
 
 # Module-level singleton — import this everywhere.
 cfg = _Config()
