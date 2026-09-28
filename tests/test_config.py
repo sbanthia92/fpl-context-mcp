@@ -5,27 +5,6 @@ import pytest
 from config import _Config
 
 
-def test_reads_pinecone_api_key(monkeypatch):
-    """Config reads PINECONE_API_KEY from the environment."""
-    monkeypatch.setenv("PINECONE_API_KEY", "my-key")
-    c = _Config()
-    assert c.pinecone_api_key == "my-key"
-
-
-def test_pinecone_index_name_default(monkeypatch):
-    """PINECONE_INDEX_NAME defaults to 'fpl-context' when unset."""
-    monkeypatch.delenv("PINECONE_INDEX_NAME", raising=False)
-    c = _Config()
-    assert c.pinecone_index_name == "fpl-context"
-
-
-def test_pinecone_index_name_override(monkeypatch):
-    """PINECONE_INDEX_NAME can be overridden."""
-    monkeypatch.setenv("PINECONE_INDEX_NAME", "my-index")
-    c = _Config()
-    assert c.pinecone_index_name == "my-index"
-
-
 def test_database_etl_url_falls_back_to_database_url(monkeypatch):
     """DATABASE_ETL_URL falls back to DATABASE_URL when unset."""
     monkeypatch.setenv("DATABASE_URL", "postgresql://ro:x@localhost/db")
@@ -40,32 +19,6 @@ def test_database_etl_url_takes_precedence(monkeypatch):
     monkeypatch.setenv("DATABASE_ETL_URL", "postgresql://etl:y@localhost/db")
     c = _Config()
     assert c.database_etl_url == "postgresql://etl:y@localhost/db"
-
-
-def test_guardian_api_key_defaults_to_empty(monkeypatch):
-    """GUARDIAN_API_KEY is empty when unset (the public 'test' key now gets a 401)."""
-    monkeypatch.delenv("GUARDIAN_API_KEY", raising=False)
-    c = _Config()
-    assert c.guardian_api_key == ""
-
-
-def test_registered_guardian_key_is_returned(monkeypatch):
-    """A configured GUARDIAN_API_KEY is passed through unchanged."""
-    monkeypatch.setenv("GUARDIAN_API_KEY", "my-real-key")
-    assert _Config().guardian_api_key == "my-real-key"
-
-
-def test_empty_pinecone_index_name_falls_back_to_default(monkeypatch):
-    """An empty PINECONE_INDEX_NAME falls back to the default index name."""
-    monkeypatch.setenv("PINECONE_INDEX_NAME", "")
-    assert _Config().pinecone_index_name == "fpl-context"
-
-
-def test_missing_pinecone_key_returns_empty_string(monkeypatch):
-    """Missing PINECONE_API_KEY returns empty string (caller handles the error)."""
-    monkeypatch.delenv("PINECONE_API_KEY", raising=False)
-    c = _Config()
-    assert c.pinecone_api_key == ""
 
 
 def test_dry_run_defaults_to_false(monkeypatch):

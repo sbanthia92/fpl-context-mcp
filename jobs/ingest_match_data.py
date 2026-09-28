@@ -298,15 +298,48 @@ def _upsert_gameweeks(cur, season_id: int, bootstrap: dict) -> None:
     log.info("[Thread-Write] upserted %d gameweeks.", len(events))
 
 
-def _upsert_players(cur, season_id: int, bootstrap: dict) -> None:
+def _ensure_news_added_column(cur) -> bool:
+    """
+    Make sure players.news_added exists, adding it to databases created before 0.7.0.
+
+    Best-effort: ALTER TABLE needs table ownership. If the role lacks it, log the
+    statement to run and return False so players are written without the column.
+    """
+    cur.execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = 'players' AND column_name = 'news_added'"
+    )
+    if cur.fetchone():
+        return True
+    cur.execute("SAVEPOINT add_news_added")
+    try:
+        cur.execute("ALTER TABLE players ADD COLUMN news_added TIMESTAMPTZ")
+        cur.execute("RELEASE SAVEPOINT add_news_added")
+        return True
+    except Exception as exc:
+        cur.execute("ROLLBACK TO SAVEPOINT add_news_added")
+        log.warning(
+            "Could not add players.news_added (%s). Player news is still written, without "
+            "its timestamp. To enable it, run as the table owner: ALTER TABLE players ADD "
+            "COLUMN news_added TIMESTAMPTZ;",
+            exc,
+        )
+        return False
+
+
+def _upsert_players(cur, season_id: int, bootstrap: dict, with_news_added: bool = True) -> None:
     """
     Upsert all FPL players from the bootstrap-static response.
 
     Args:
-        cur:       psycopg2 cursor.
-        season_id: Current season primary key.
-        bootstrap: FPL bootstrap-static JSON response.
+        cur:             psycopg2 cursor.
+        season_id:       Current season primary key.
+        bootstrap:       FPL bootstrap-static JSON response.
+        with_news_added: Also write news_added (False on databases lacking the column).
     """
+    news_added_col = ", news_added" if with_news_added else ""
+    news_added_val = ",%s" if with_news_added else ""
+    news_added_set = "news_added = EXCLUDED.news_added," if with_news_added else ""
     players = bootstrap.get("elements", [])
     for p in players:
         position = _POSITION_MAP.get(p["element_type"], "MID")
@@ -316,8 +349,45 @@ def _upsert_players(cur, season_id: int, bootstrap: dict) -> None:
             v = p.get(key)
             return float(v) if v else None
 
+        params = (
+            season_id,
+            p["id"],
+            p["team"],
+            p["first_name"],
+            p["second_name"],
+            p["web_name"],
+            position,
+            p.get("now_cost"),
+            p.get("total_points"),
+            p.get("minutes"),
+            p.get("goals_scored"),
+            p.get("assists"),
+            p.get("clean_sheets"),
+            p.get("goals_conceded"),
+            p.get("yellow_cards"),
+            p.get("red_cards"),
+            p.get("bonus"),
+            _f("form"),
+            _f("points_per_game"),
+            _f("selected_by_percent"),
+            p.get("transfers_in_event"),
+            p.get("transfers_out_event"),
+            p.get("status"),
+            p.get("chance_of_playing_next_round"),
+            p.get("news"),
+            _f("creativity"),
+            _f("influence"),
+            _f("threat"),
+            _f("ict_index"),
+            _f("expected_goals"),
+            _f("expected_assists"),
+            _f("expected_goal_involvements"),
+        )
+        if with_news_added:
+            params += (_parse_dt(p.get("news_added")),)
+
         cur.execute(
-            """
+            f"""
             INSERT INTO players (
                 season_id, fpl_id, team_fpl_id, first_name, second_name, web_name,
                 position, now_cost, total_points, minutes, goals_scored, assists,
@@ -327,10 +397,10 @@ def _upsert_players(cur, season_id: int, bootstrap: dict) -> None:
                 chance_of_playing_next_round, news,
                 creativity, influence, threat, ict_index,
                 expected_goals, expected_assists, expected_goal_involvements,
-                updated_at
+                updated_at{news_added_col}
             ) VALUES (
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW()
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(){news_added_val}
             )
             ON CONFLICT (season_id, fpl_id) DO UPDATE SET
                 team_fpl_id = EXCLUDED.team_fpl_id,
@@ -352,6 +422,7 @@ def _upsert_players(cur, season_id: int, bootstrap: dict) -> None:
                 status = EXCLUDED.status,
                 chance_of_playing_next_round = EXCLUDED.chance_of_playing_next_round,
                 news = EXCLUDED.news,
+                {news_added_set}
                 creativity = EXCLUDED.creativity,
                 influence = EXCLUDED.influence,
                 threat = EXCLUDED.threat,
@@ -361,40 +432,7 @@ def _upsert_players(cur, season_id: int, bootstrap: dict) -> None:
                 expected_goal_involvements = EXCLUDED.expected_goal_involvements,
                 updated_at = NOW()
             """,
-            (
-                season_id,
-                p["id"],
-                p["team"],
-                p["first_name"],
-                p["second_name"],
-                p["web_name"],
-                position,
-                p.get("now_cost"),
-                p.get("total_points"),
-                p.get("minutes"),
-                p.get("goals_scored"),
-                p.get("assists"),
-                p.get("clean_sheets"),
-                p.get("goals_conceded"),
-                p.get("yellow_cards"),
-                p.get("red_cards"),
-                p.get("bonus"),
-                _f("form"),
-                _f("points_per_game"),
-                _f("selected_by_percent"),
-                p.get("transfers_in_event"),
-                p.get("transfers_out_event"),
-                p.get("status"),
-                p.get("chance_of_playing_next_round"),
-                p.get("news"),
-                _f("creativity"),
-                _f("influence"),
-                _f("threat"),
-                _f("ict_index"),
-                _f("expected_goals"),
-                _f("expected_assists"),
-                _f("expected_goal_involvements"),
-            ),
+            params,
         )
     log.info("[Thread-Write] upserted %d players.", len(players))
 
@@ -656,7 +694,9 @@ def delta_write(fpl_result: dict | None) -> bool:
             season_id = _upsert_season(cur, bootstrap)
             _upsert_teams(cur, season_id, bootstrap)
             _upsert_gameweeks(cur, season_id, bootstrap)
-            _upsert_players(cur, season_id, bootstrap)
+            _upsert_players(
+                cur, season_id, bootstrap, with_news_added=_ensure_news_added_column(cur)
+            )
             _upsert_fixtures(cur, season_id, fixtures)
 
             pending = _fixtures_needing_stats(cur, season_id)

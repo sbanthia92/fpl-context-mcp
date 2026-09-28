@@ -57,7 +57,8 @@ exist only as season totals in `players` (see notes below the table list):
   players        — season_id, fpl_id, team_fpl_id, first_name, second_name,
                    web_name, position (GKP/DEF/MID/FWD), now_cost, form,
                    total_points, minutes, goals_scored, assists, clean_sheets,
-                   expected_goals, expected_assists, ict_index, status, news
+                   expected_goals, expected_assists, ict_index, selected_by_percent,
+                   status, chance_of_playing_next_round, news, news_added
   fixtures       — season_id, fpl_id, gw_number, kickoff_time,
                    home_team_fpl_id, away_team_fpl_id, home_score, away_score,
                    finished, home_team_difficulty, away_team_difficulty
@@ -74,6 +75,14 @@ Notes:
   - Past seasons only include players in the CURRENT FPL player list. Departed players are
     absent, so league-wide or team-wide totals for past seasons are incomplete; only trust
     per-player history for players who appear in the current season.
+
+Injury and availability (current season `players` rows, refreshed from FPL):
+  - status: 'a' available, 'd' doubtful, 'i' injured, 's' suspended,
+    'u' unavailable (e.g. left the club / on loan), 'n' not in squad.
+  - chance_of_playing_next_round: 0–100, NULL when there is no concern.
+  - news: FPL's one-line note (e.g. 'Hamstring injury - 75% chance of playing'),
+    '' when none. news_added: when that note last changed — use it for
+    "what's new this week" questions (ORDER BY news_added DESC).
 
 Join hint: teams.fpl_id = players.team_fpl_id (current season, same season_id).
 """

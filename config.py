@@ -34,16 +34,6 @@ class _Config:
     """
 
     @property
-    def pinecone_api_key(self) -> str:
-        """Pinecone API key. Required for RAG tools and press ingestion."""
-        return os.getenv("PINECONE_API_KEY", "")
-
-    @property
-    def pinecone_index_name(self) -> str:
-        """Pinecone index name. Defaults to 'fpl-context'; override with PINECONE_INDEX_NAME."""
-        return os.getenv("PINECONE_INDEX_NAME") or "fpl-context"
-
-    @property
     def database_url(self) -> str:
         """
         Read-only PostgreSQL connection string (fpl_readonly user).
@@ -62,21 +52,10 @@ class _Config:
         return os.getenv("DATABASE_ETL_URL", "") or self.database_url
 
     @property
-    def guardian_api_key(self) -> str:
-        """
-        The Guardian open platform API key.
-        Register for free at https://open-platform.theguardian.com/access/.
-        Empty by default: the Guardian API rejects the old public 'test' key (HTTP 401),
-        so without a registered key the Guardian source is skipped and only BBC Sport
-        articles are ingested.
-        """
-        return os.getenv("GUARDIAN_API_KEY", "")
-
-    @property
     def dry_run(self) -> bool:
         """
         When True, tools return what they *would* do without any side effects, and
-        ingestion jobs fetch data but skip all writes to Pinecone and PostgreSQL.
+        ingestion jobs fetch data but skip all writes to PostgreSQL.
 
         Set DRY_RUN=true (or 1 / yes) to enable. Useful for verifying connectivity
         and configuration before committing to a production run.

@@ -1,10 +1,10 @@
 """
 fpl-context-mcp — MCP server entry point.
 
-Exposes two tools over MCP, via stdio (default) or streamable HTTP:
+Exposes one tool over MCP, via stdio (default) or streamable HTTP:
 
   query_historical_stats   — read-only SQL against the FPL PostgreSQL database
-  query_press_conferences  — semantic search over the Pinecone 'press' namespace
+                             (stats, fixtures, and player injury/availability)
 
 Run locally:
     cd fpl-context-mcp
@@ -35,7 +35,6 @@ from tools.query_historical_stats import (
     SCHEMA_DESCRIPTION,
     query_historical_stats,
 )
-from tools.query_press_conferences import query_press_conferences
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,21 +54,6 @@ def check_config() -> None:
 
     ok = True
     lines = ["\n=== fpl-context-mcp configuration check ===\n"]
-
-    # --- Pinecone ---
-    if not cfg.pinecone_api_key:
-        lines.append("❌ PINECONE_API_KEY  not set (required for query_press_conferences)")
-        ok = False
-    else:
-        try:
-            from pinecone import Pinecone as _PC
-
-            pc = _PC(api_key=cfg.pinecone_api_key)
-            pc.Index(cfg.pinecone_index_name).describe_index_stats()
-            lines.append(f"✅ Pinecone          connected (index: {cfg.pinecone_index_name!r})")
-        except Exception as exc:
-            lines.append(f"❌ Pinecone          connection failed: {exc}")
-            ok = False
 
     # --- PostgreSQL (read-only) ---
     if not cfg.database_url:
@@ -104,15 +88,6 @@ def check_config() -> None:
             lines.append(f"❌ PostgreSQL (ETL)  connection failed: {exc}")
             ok = False
 
-    # --- Guardian API (optional) ---
-    if not cfg.guardian_api_key:
-        lines.append(
-            "⚠️  GUARDIAN_API_KEY  not set (Guardian articles will be skipped, BBC Sport only — "
-            "register a free key at open-platform.theguardian.com/access)"
-        )
-    else:
-        lines.append("✅ Guardian API      registered key configured")
-
     # --- Dry-run flag ---
     if cfg.dry_run:
         lines.append("\n🔁 DRY_RUN=true — no writes will be made")
@@ -138,7 +113,7 @@ server = Server("fpl-context-mcp", version=_package_version())
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
     """
-    Advertise the two MCP tools this server exposes.
+    Advertise the MCP tool this server exposes.
 
     Called by the MCP client (e.g. Claude Desktop) during initialisation to
     discover what capabilities are available.
@@ -153,7 +128,10 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Execute a read-only SQL SELECT against the FPL stats "
                 "database. Use this to answer questions about player stats, fixtures, "
-                "team strength, or gameweek history for the seasons in the database.\n\n"
+                "team strength, gameweek history, and player injury/availability status "
+                "(FPL's status, chance of playing and news note) for the seasons in the "
+                "database. It holds no press coverage: for match reports, manager quotes "
+                "or press-conference news, use your own web search if you have it.\n\n"
                 + SCHEMA_DESCRIPTION
             ),
             inputSchema={
@@ -169,39 +147,6 @@ async def list_tools() -> list[types.Tool]:
                     }
                 },
                 "required": ["sql"],
-            },
-        ),
-        types.Tool(
-            name="query_press_conferences",
-            description=(
-                "Semantic search over Premier League press conference summaries, match "
-                "reports, and player injury/availability updates ingested from BBC Sport "
-                "and The Guardian. Use this to find recent quotes, injury news, or "
-                "manager/team news."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Natural-language question or topic to search for.",
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "description": "Number of documents to retrieve. Default 5.",
-                        "default": 5,
-                    },
-                    "recency_weight": {
-                        "type": "number",
-                        "description": (
-                            "How strongly to boost recent articles in ranking. "
-                            "0.0 = pure semantic similarity, 1.0 = heavy recency bias. "
-                            "Default 0.3."
-                        ),
-                        "default": 0.3,
-                    },
-                },
-                "required": ["query"],
             },
         ),
     ]
@@ -230,16 +175,6 @@ async def call_tool(
     if name == "query_historical_stats":
         sql = arguments.get("sql", "")
         result = await query_historical_stats(sql)
-
-    elif name == "query_press_conferences":
-        query = arguments.get("query", "")
-        top_k = int(arguments.get("top_k", 5))
-        recency_weight = float(arguments.get("recency_weight", 0.3))
-        result = await query_press_conferences(
-            query=query,
-            top_k=top_k,
-            recency_weight=recency_weight,
-        )
 
     else:
         raise ValueError(f"Unknown tool: {name!r}")
@@ -332,7 +267,7 @@ def _serve_http(host: str, port: int) -> None:
     if not token and host not in _LOOPBACK_HOSTS:
         log.warning(
             "MCP_AUTH_TOKEN is not set and the server is bound to %s — anyone who can "
-            "reach this address can query your database and Pinecone index. Set "
+            "reach this address can query your database. Set "
             "MCP_AUTH_TOKEN, or put the server behind an authenticating proxy.",
             host,
         )
@@ -346,7 +281,7 @@ def _parse_args(argv: list[str]):
 
     parser = argparse.ArgumentParser(
         prog="fpl-context-mcp",
-        description="FPL stats and press-coverage MCP server.",
+        description="FPL stats and player-availability MCP server.",
     )
     parser.add_argument(
         "--check",

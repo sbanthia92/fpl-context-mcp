@@ -1,7 +1,7 @@
 """
 Shared pytest fixtures for fpl-context-mcp tests.
 
-All external calls (HTTP, Pinecone, PostgreSQL) are mocked here so tests
+All external calls (HTTP, PostgreSQL) are mocked here so tests
 never hit real APIs or databases.
 """
 
@@ -16,8 +16,5 @@ def set_env(monkeypatch):
     Uses monkeypatch so values are restored after each test — no bleed between
     test cases.
     """
-    monkeypatch.setenv("PINECONE_API_KEY", "test-pinecone-key")
-    monkeypatch.setenv("PINECONE_INDEX_NAME", "test-index")
     monkeypatch.setenv("DATABASE_URL", "postgresql://readonly:pass@localhost/fpl")
     monkeypatch.setenv("DATABASE_ETL_URL", "postgresql://etl:pass@localhost/fpl")
-    monkeypatch.setenv("GUARDIAN_API_KEY", "test-guardian-key")

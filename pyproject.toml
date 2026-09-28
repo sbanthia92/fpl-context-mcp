@@ -1,14 +1,14 @@
 [project]
 name = "fpl-context-mcp"
-version = "0.6.3"
-description = "MCP server that gives any AI agent Fantasy Premier League stats and press/injury news search, with ingestion jobs that keep PostgreSQL and Pinecone up to date."
+version = "0.7.0"
+description = "MCP server that gives any AI agent Fantasy Premier League stats and player injury/availability via read-only SQL, with ingestion jobs that keep PostgreSQL up to date."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
     { name = "Shubham Banthia", email = "sbanthia92@gmail.com" },
 ]
-keywords = ["mcp", "model-context-protocol", "fantasy-premier-league", "fpl", "sports", "rag", "chatgpt", "claude", "gemini"]
+keywords = ["mcp", "model-context-protocol", "fantasy-premier-league", "fpl", "sports", "football", "soccer", "chatgpt", "claude", "gemini"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -24,8 +24,6 @@ dependencies = [
     # the mcp 1.x low-level Server decorator API (@server.list_tools() etc.),
     # which mcp 2.x removed/rewrote entirely.
     "mcp>=1.8.0,<2.0.0",
-    # Pinecone vector store — used by the MCP tool and the press ingestion job
-    "pinecone>=5.0.0",
     # Async PostgreSQL client — used by the MCP query tool (server is async)
     "asyncpg>=0.29.0",
     # Sync PostgreSQL client — used by the threaded ingest_match_data job
@@ -51,7 +49,6 @@ Issues = "https://github.com/sbanthia92/fpl-context-mcp/issues"
 
 [project.scripts]
 fpl-context-mcp = "server:main"
-fpl-context-ingest-press = "jobs.ingest_press_content:main"
 fpl-context-ingest-match = "jobs.ingest_match_data:main"
 fpl-context-backfill-history = "jobs.backfill_history:main"
 

@@ -10,11 +10,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from jobs.ingest_match_data import (
+    _ensure_news_added_column,
     _fetch_and_upsert_player_stats,
     _fixtures_needing_stats,
     _parse_dt,
     _upsert_fixtures,
     _upsert_gameweeks,
+    _upsert_players,
     delta_write,
     fetch_fpl_data,
     main,
@@ -413,3 +415,87 @@ def test_main_exits_nonzero_on_failure():
         with pytest.raises(SystemExit) as exc:
             main()
     assert exc.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# Player availability: news_added column
+# ---------------------------------------------------------------------------
+
+
+def _player(**overrides) -> dict:
+    p = {
+        "id": 7,
+        "team": 1,
+        "first_name": "Charalampos",
+        "second_name": "Kostoulas",
+        "web_name": "Kostoulas",
+        "element_type": 4,
+        "status": "d",
+        "chance_of_playing_next_round": 75,
+        "news": "Knock - 75% chance of playing",
+        "news_added": "2026-09-24T10:30:00.000000Z",
+    }
+    p.update(overrides)
+    return p
+
+
+def test_ensure_news_added_column_exists():
+    """No ALTER when information_schema already has the column."""
+    cur = MagicMock()
+    cur.fetchone.return_value = (1,)
+    assert _ensure_news_added_column(cur) is True
+    sqls = [c.args[0] for c in cur.execute.call_args_list]
+    assert not any("ALTER" in s for s in sqls)
+
+
+def test_ensure_news_added_column_adds_when_missing():
+    """Older databases get the column added inside a savepoint."""
+    cur = MagicMock()
+    cur.fetchone.return_value = None
+    assert _ensure_news_added_column(cur) is True
+    sqls = [c.args[0] for c in cur.execute.call_args_list]
+    assert "ALTER TABLE players ADD COLUMN news_added TIMESTAMPTZ" in sqls
+    assert "RELEASE SAVEPOINT add_news_added" in sqls
+
+
+def test_ensure_news_added_column_tolerates_missing_privilege():
+    """Without table ownership the ALTER is rolled back and players skip the column."""
+    cur = MagicMock()
+    cur.fetchone.return_value = None
+
+    def execute(sql, *args):
+        if sql.startswith("ALTER"):
+            raise Exception("must be owner of table players")
+
+    cur.execute.side_effect = execute
+    assert _ensure_news_added_column(cur) is False
+    sqls = [c.args[0] for c in cur.execute.call_args_list]
+    assert "ROLLBACK TO SAVEPOINT add_news_added" in sqls
+
+
+def test_upsert_players_writes_news_added():
+    """news_added is parsed and written alongside status, chance of playing and news."""
+    cur = MagicMock()
+    _upsert_players(cur, 1, {"elements": [_player()]})
+    sql, params = cur.execute.call_args.args
+    assert "news_added" in sql
+    assert sql.count("%s") == len(params)
+    assert params[-1] == _parse_dt("2026-09-24T10:30:00.000000Z")
+    assert "Knock - 75% chance of playing" in params
+    assert 75 in params
+
+
+def test_upsert_players_without_news_added_column():
+    """On databases lacking the column, the statement omits it entirely."""
+    cur = MagicMock()
+    _upsert_players(cur, 1, {"elements": [_player()]}, with_news_added=False)
+    sql, params = cur.execute.call_args.args
+    assert "news_added" not in sql
+    assert sql.count("%s") == len(params)
+
+
+def test_upsert_players_null_news_added():
+    """Players with no news have news_added NULL."""
+    cur = MagicMock()
+    _upsert_players(cur, 1, {"elements": [_player(news="", news_added=None)]})
+    assert cur.execute.call_args.args[1][-1] is None
