@@ -1,8 +1,14 @@
 # fpl-context-mcp
 
-Standalone MCP server that exposes Premier League sports stats and press-conference
-RAG as MCP tools, plus threaded ingestion jobs that keep the underlying PostgreSQL
-and Pinecone stores up to date.
+Standalone MCP server that exposes Fantasy Premier League stats, fixtures and player
+injury/availability as a read-only SQL MCP tool, plus threaded ingestion jobs that keep the
+underlying PostgreSQL database up to date.
+
+**No press/news articles, by design.** Until 0.7.0 the package ingested BBC Sport RSS and
+Guardian Open Platform articles into Pinecone. That was removed because the Guardian's terms
+forbid using its content with AI technologies and storing it beyond 24 hours, and BBC feeds are
+personal/non-commercial only. Do not add a publisher-content source without a licence that
+permits AI use; press questions are left to the client model's own web search.
 
 Works with any MCP-compatible host: stdio (default) for local clients (Claude Desktop/Code,
 Cursor, VS Code, Gemini CLI, Codex), or `--transport http` (streamable HTTP at `/mcp`) for
@@ -12,7 +18,6 @@ URL-only clients such as ChatGPT connectors. Listed in the official MCP Registry
 ## Stack
 - **Language**: Python 3.11+
 - **MCP framework**: `mcp` Python SDK (stdio transport; streamable HTTP via `StreamableHTTPSessionManager` + uvicorn, stateless)
-- **Vector store**: Pinecone (`multilingual-e5-large` built-in inference, namespace `press`)
 - **Database**: PostgreSQL (read-only for MCP tools, read/write for ingestion jobs)
 - **HTTP**: `requests` (sync, used by jobs) + `asyncpg` (async, used by MCP tools)
 - **Concurrency**: `concurrent.futures.ThreadPoolExecutor` in jobs — no asyncio mixing
@@ -24,18 +29,16 @@ fpl-context-mcp/
   server.py                        # MCP server entry point (stdio transport)
   tools/
     query_historical_stats.py      # MCP tool: read-only SQL → PostgreSQL
-    query_press_conferences.py     # MCP tool: semantic search → Pinecone 'press' namespace
   jobs/
-    ingest_press_content.py        # Pinecone updater: BBC RSS + Guardian API, threaded
     ingest_match_data.py           # PostgreSQL updater: FPL, all fixtures + stats delta
     backfill_history.py            # One-time: past-season player totals from FPL history_past
   tests/
     conftest.py
     test_config.py
-    test_tools_press.py
     test_tools_stats.py
-    test_ingest_press_content.py
     test_ingest_match_data.py
+    test_backfill_history.py
+    test_server_http.py
   db/
     schema.sql                     # Reference PostgreSQL schema for standalone provisioning
   pyproject.toml
@@ -43,7 +46,6 @@ fpl-context-mcp/
   LICENSE                          # MIT
   .env.example
   .github/workflows/
-    ingest_press_content.yml       # Nightly press ingestion (this repo's own data, not customers')
     ingest_match_data.yml          # Configurable match data ingestion (this repo's own data, not customers')
     backfill_history.yml           # Manual (workflow_dispatch) past-season backfill
     ci.yml                         # ruff + pytest on Python 3.11–3.13 for pushes to main and PRs
@@ -53,11 +55,11 @@ fpl-context-mcp/
 ```
 
 Installed CLI entry points (`[project.scripts]` in `pyproject.toml`): `fpl-context-mcp`
-(the server), `fpl-context-ingest-press`, `fpl-context-ingest-match` (the two recurring jobs),
+(the server), `fpl-context-ingest-match` (the recurring job),
 `fpl-context-backfill-history` (one-time) — callable directly after `pip install`, no repo clone needed.
 
 **Data ownership model**: this package is bring-your-own-backend. Every install talks to
-whatever `DATABASE_URL`/`PINECONE_API_KEY` the operator configures — their own storage,
+whatever `DATABASE_URL` the operator configures — their own storage,
 empty until they run the ingestion jobs themselves (README: "Seeding data" / "Keeping data
 fresh"). The `.github/workflows/ingest_*.yml` files in this repo only run against secrets
 configured on `sbanthia92/fpl-context-mcp` and feed the maintainer's own database — they
@@ -80,7 +82,6 @@ python server.py
 python server.py --transport http
 
 # Run ingestion jobs manually
-python -m jobs.ingest_press_content
 python -m jobs.ingest_match_data
 python -m jobs.backfill_history   # one-time, past seasons
 ```
@@ -92,11 +93,8 @@ loaded automatically by `config.py` when `python-dotenv` is installed.
 
 | Variable            | Required | Default      | Purpose |
 |---------------------|----------|--------------|---------|
-| `PINECONE_API_KEY`  | Yes      | —            | Pinecone API key |
-| `PINECONE_INDEX_NAME` | No     | `fpl-context` | Pinecone index name |
 | `DATABASE_URL`      | Yes*     | —            | Read-only PostgreSQL DSN (`fpl_readonly` user) |
 | `DATABASE_ETL_URL`  | Yes*     | —            | Read/write PostgreSQL DSN (`fpl_etl` user). Falls back to `DATABASE_URL`. |
-| `GUARDIAN_API_KEY`  | No       | (empty)      | Guardian open platform key. Register free at open-platform.theguardian.com. Without it the Guardian source is skipped (BBC only). |
 | `MCP_AUTH_TOKEN`    | No       | (empty)      | HTTP transport only: require `Authorization: Bearer <token>` on `/mcp`. |
 | `MCP_TRANSPORT` / `MCP_HOST` / `MCP_PORT` (or `PORT`) | No | `stdio` / `127.0.0.1` / `8000` | Defaults for `--transport` / `--host` / `--port`. |
 
@@ -124,26 +122,12 @@ Executes a read-only SQL SELECT against the FPL PostgreSQL database.
 - Blocks mutation keywords (INSERT/UPDATE/DELETE/DROP etc.)
 - 10-second statement timeout
 - 100-row result cap
-- Inline schema description helps the model write valid queries without a schema-lookup call
-
-### `query_press_conferences`
-Semantic search over the Pinecone `press` namespace (BBC Sport + Guardian articles,
-FPL player injury updates). Applies recency-weighted re-ranking and returns a
-length-capped snippet per document.
+- Inline schema description helps the model write valid queries without a schema-lookup call,
+  including the availability columns (`status` codes, `chance_of_playing_next_round`, `news`,
+  `news_added`). The tool description tells the model to use its own web search for press
+  coverage — keep that line.
 
 ## Ingestion jobs
-
-### `ingest_press_content`
-- Thread 1: BBC Sport PL RSS → press articles
-- Thread 2: Guardian API (`content.guardianapis.com`) → press articles
-- Sequential after threads: FPL bootstrap → player injury/availability docs (one doc per
-  player, stable ID, overwritten every run; docs for players whose news FPL has cleared are
-  deleted after each successful run — skipped if the FPL fetch returned nothing)
-- Embeds with `multilingual-e5-large`, batch 96, upserts to `press` namespace
-- Deletes articles older than 14 days on every run
-
-**Adding a new source**: subclass `_BaseFetcher`, implement `fetch()`, append to `FETCHERS`.
-No other changes needed.
 
 ### `ingest_match_data`
 - Thread 1: FPL API bootstrap-static + fixtures
@@ -153,6 +137,9 @@ No other changes needed.
   8 concurrent requests) only for finished fixtures that have no stats yet or kicked off in the
   last 2 days (bonus points get revised). Batched `execute_values` upsert; rolls back on error.
 - Only needs `DATABASE_ETL_URL` (falls back to `DATABASE_URL`).
+- `players.news_added` (added in 0.7.0): `_ensure_news_added_column` adds it to older databases
+  inside a savepoint; without table ownership it logs the `ALTER TABLE` to run and players are
+  written without the column (`with_news_added=False`).
 
 **Fetch failure**: if the fetch thread fails, its result is `None` and the writer logs the full
 traceback and returns False; the CLI exits 1.
@@ -169,22 +156,6 @@ writes nothing — results and stats silently freeze. The delta belongs on *stat
 - Limitation: only players in the current FPL list, so departed players and league-wide past totals
   are incomplete. FPL serves no past fixtures/teams/per-match stats.
 
-## Pinecone document schema
-
-Documents upserted to the `press` namespace carry this metadata:
-```python
-{
-    "text": str,  # Full document text (embedded)
-    "type": "press_article" | "player_news",
-    "source": str,  # "BBC Sport" | "The Guardian" | "FPL"
-    "date": str,  # RFC 2822 or ISO 8601
-    "pub_timestamp": float,  # Unix timestamp — used for stale-doc deletion
-    "recency_score": float,  # 1.0 (today) → 0.1 (14 days) — used for re-ranking
-    "refreshed_at": float,  # player_news only — run timestamp, used to prune cleared news
-    "url": str,  # press_article only
-}
-```
-
 ## Git workflow
 - **Branch from main**: `git checkout -b fix/description origin/main`
 - **PR per change** — keep commits small and descriptive
@@ -196,7 +167,7 @@ Documents upserted to the `press` namespace carry this metadata:
 3. Update `CLAUDE.md` if conventions, architecture, or env vars change
 
 ## Commit conventions
-- `feat:` — new tool, job, or fetcher
+- `feat:` — new tool or job
 - `fix:` — bug fix
 - `chore:` — deps, CI, formatting
 - `refactor:` — restructure without behaviour change
@@ -208,10 +179,6 @@ Documents upserted to the `press` namespace carry this metadata:
   and keep it matching `name` in `server.json`.
 - **HTTP `/mcp` route**: it's a Starlette `Route` with an ASGI class instance, not a `Mount` —
   `Mount` 307-redirects `/mcp` to `/mcp/`, which some clients don't follow.
-- **Guardian API key required**: the public `test` key now returns HTTP 401, so the Guardian
-  fetcher is skipped unless `GUARDIAN_API_KEY` is a registered key (free). BBC still ingests.
-- **Pinecone inference rate limits**: the 8-second sleep between embed batches in `_upsert`
-  exists to avoid HTTP 429s on the free inference tier. Remove or reduce it on paid tiers.
 - **Thread 3 ordering**: `concurrent.futures.wait([f1])` is the only enforcement that
   Thread 3 starts after Thread 1 (the FPL fetch). Do not refactor this to `as_completed`
   in a way that allows the writer to start before the fetcher finishes.

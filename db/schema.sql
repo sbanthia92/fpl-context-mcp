@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS players (
     status                        TEXT,
     chance_of_playing_next_round  INTEGER,
     news                          TEXT,
+    news_added                    TIMESTAMPTZ,  -- when FPL last changed `news`
     creativity                    NUMERIC,
     influence                     NUMERIC,
     threat                        NUMERIC,

@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-28
+
+Breaking: the press/news pipeline and Pinecone are gone. The server is now a focused
+FPL stats and availability server backed by PostgreSQL alone.
+
+### Removed
+
+- **`query_press_conferences` tool, `fpl-context-ingest-press` command and the
+  `ingest_press_content` job.** They stored BBC Sport RSS and Guardian Open Platform
+  articles in Pinecone and served them through an AI tool. The Guardian's terms prohibit
+  using its content with AI technologies and keeping it longer than 24 hours, and BBC
+  feeds are for personal, non-commercial use, so this couldn't be offered legitimately.
+  The tool description now tells the model to use its own web search for press coverage.
+- **Pinecone dependency** and the `PINECONE_API_KEY`, `PINECONE_INDEX_NAME` and
+  `GUARDIAN_API_KEY` settings. Leftover values in your environment are ignored. If you
+  ran the press job, your Pinecone `press` namespace is no longer used; delete it (and the
+  Guardian content in it) from the Pinecone console.
+
+### Added
+
+- **`players.news_added`**: when FPL last changed a player's news note, for "what's new
+  this week" questions. Existing databases get the column automatically on the next
+  `fpl-context-ingest-match` run if the ETL role owns the table; otherwise the job logs
+  the one-line `ALTER TABLE` to run and keeps writing everything else.
+- The SQL tool's schema description now documents availability properly: `status` codes,
+  `chance_of_playing_next_round`, `news`, `news_added` and `selected_by_percent`.
+
+### Changed
+
+- Setup needs only PostgreSQL. README, `.env.example`, `server.json` and `--check`
+  updated to match.
+
 ## [0.6.3] — 2026-09-26
 
 ### Changed
