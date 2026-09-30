@@ -1,6 +1,6 @@
 [project]
 name = "fpl-context-mcp"
-version = "0.7.0"
+version = "0.7.1"
 description = "MCP server that gives any AI agent Fantasy Premier League stats and player injury/availability via read-only SQL, with ingestion jobs that keep PostgreSQL up to date."
 readme = "README.md"
 license = "MIT"

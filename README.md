@@ -537,7 +537,7 @@ The package ships no data. The ingestion jobs fetch it, on your machine and unde
 |---|---|---|
 | Fantasy Premier League API (`fantasy.premierleague.com/api`) | Players, teams, fixtures, match stats, injury/availability news | Unofficial and undocumented; it can change or rate-limit without notice. |
 
-**No news articles.** Earlier versions (before 0.7.0) also ingested BBC Sport and Guardian articles into a Pinecone index. That was removed: the Guardian's Open Platform terms prohibit using its content with AI technologies and storing it for more than 24 hours, and BBC feeds are licensed for personal, non-commercial use. For press coverage, let your AI client use its own web search.
+**No news articles.** The server doesn't store or serve press coverage. For match reports, quotes and press-conference news, let your AI client use its own web search.
 
 **You are responsible for complying with each source's terms of use** for the data you ingest, store, and — if you [host the server](#remote-access-over-http-chatgpt-and-other-url-only-clients) for other people — serve. This is especially relevant for commercial use and for public deployments. The MIT license below covers this project's code only, not any third-party content it retrieves.
 
