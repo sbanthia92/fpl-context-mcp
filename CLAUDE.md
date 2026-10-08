@@ -4,11 +4,9 @@ Standalone MCP server that exposes Fantasy Premier League stats, fixtures and pl
 injury/availability as a read-only SQL MCP tool, a live availability tool, plus threaded
 ingestion jobs that keep the underlying PostgreSQL database up to date.
 
-**No press/news articles, by design.** Until 0.7.0 the package ingested BBC Sport RSS and
-Guardian Open Platform articles into Pinecone. That was removed because the Guardian's terms
-forbid using its content with AI technologies and storing it beyond 24 hours, and BBC feeds are
-personal/non-commercial only. Do not add a publisher-content source without a licence that
-permits AI use; press questions are left to the client model's own web search.
+**Licensing guardrail.** Only ingest or serve data from sources whose terms permit use through
+an AI tool (currently the FPL API). Do not add a publisher-content source without a licence that
+allows AI use.
 
 Works with any MCP-compatible host: stdio (default) for local clients (Claude Desktop/Code,
 Cursor, VS Code, Gemini CLI, Codex), or `--transport http` (streamable HTTP at `/mcp`) for
@@ -126,8 +124,8 @@ Executes a read-only SQL SELECT against the FPL PostgreSQL database.
 - 100-row result cap
 - Inline schema description helps the model write valid queries without a schema-lookup call,
   including the availability columns (`status` codes, `chance_of_playing_next_round`, `news`,
-  `news_added`). The tool description tells the model to use its own web search for press
-  coverage — keep that line.
+  `news_added`). The tool description points the model at `get_live_availability` for current
+  flags — keep that line.
 
 ### `get_live_availability`
 Fetches FPL `bootstrap-static` on demand and returns each player's `status`,

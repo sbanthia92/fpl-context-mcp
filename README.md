@@ -15,8 +15,6 @@ An ingestion job keeps that data populated and current:
 |---|---|
 | `ingest_match_data` | Fetches teams, fixtures, players (with availability) and per-match player stats from the FPL API, and writes them to PostgreSQL |
 
-**What it doesn't do: press coverage.** Match reports, manager quotes and press-conference news aren't included — publishers' terms don't allow their articles to be stored and served through an AI tool. The tool description tells the model to use its own web search for that, which Claude, ChatGPT and Gemini all have. The division of labour: this server answers "who's injured, who's in form, what are the fixtures"; the AI's web search answers "what did the manager say".
-
 > **`query_historical_stats` only reads what is already in *your* PostgreSQL database.** It starts out **empty** — you must run the ingestion job once to seed it, and then keep running it **on a recurring schedule forever**, or its answers will silently go stale. This is not a one-time setup step. See [Keeping data fresh (ongoing)](#keeping-data-fresh-ongoing). `get_live_availability` is the exception: it needs no database and always returns FPL's current injury and suspension flags.
 
 ---
@@ -562,8 +560,6 @@ The package ships no data. The ingestion jobs fetch it, on your machine and unde
 | Source | Used for | Notes |
 |---|---|---|
 | Fantasy Premier League API (`fantasy.premierleague.com/api`) | Players, teams, fixtures, match stats, injury/availability news (ingested into PostgreSQL, and fetched live by `get_live_availability`) | Unofficial and undocumented; it can change or rate-limit without notice. |
-
-**No news articles.** The server doesn't store or serve press coverage. For match reports, quotes and press-conference news, let your AI client use its own web search.
 
 **You are responsible for complying with each source's terms of use** for the data you ingest, store, and — if you [host the server](#remote-access-over-http-chatgpt-and-other-url-only-clients) for other people — serve. This is especially relevant for commercial use and for public deployments. The MIT license below covers this project's code only, not any third-party content it retrieves.
 
