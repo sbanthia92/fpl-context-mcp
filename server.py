@@ -1,10 +1,11 @@
 """
 fpl-context-mcp — MCP server entry point.
 
-Exposes one tool over MCP, via stdio (default) or streamable HTTP:
+Exposes two tools over MCP, via stdio (default) or streamable HTTP:
 
   query_historical_stats   — read-only SQL against the FPL PostgreSQL database
                              (stats, fixtures, and player injury/availability)
+  get_live_availability    — current injury/suspension flags fetched live from FPL
 
 Run locally:
     cd fpl-context-mcp
@@ -31,6 +32,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from config import cfg
+from tools.get_live_availability import get_live_availability
 from tools.query_historical_stats import (
     SCHEMA_DESCRIPTION,
     query_historical_stats,
@@ -130,9 +132,8 @@ async def list_tools() -> list[types.Tool]:
                 "database. Use this to answer questions about player stats, fixtures, "
                 "team strength, gameweek history, and player injury/availability status "
                 "(FPL's status, chance of playing and news note) for the seasons in the "
-                "database. It holds no press coverage: for match reports, manager quotes "
-                "or press-conference news, use your own web search if you have it.\n\n"
-                + SCHEMA_DESCRIPTION
+                "database. Availability here is as of the last data refresh; call "
+                "get_live_availability for the current flags.\n\n" + SCHEMA_DESCRIPTION
             ),
             inputSchema={
                 "type": "object",
@@ -147,6 +148,38 @@ async def list_tools() -> list[types.Tool]:
                     }
                 },
                 "required": ["sql"],
+            },
+        ),
+        types.Tool(
+            name="get_live_availability",
+            description=(
+                "Current FPL injury, suspension and availability flags, fetched live from "
+                "the FPL API (no database needed). Call this before recommending, picking "
+                "or captaining any player, so a newly flagged or suspended player isn't "
+                "missed. With no arguments it lists every player who currently has a flag, "
+                "newest news first. Pass player names to check specific players (returned "
+                "even when fully available), and/or statuses to filter.\n\n"
+                "Status codes: a available, d doubtful, i injured, s suspended, "
+                "u unavailable (left club / on loan), n not in squad. "
+                "chance_of_playing is FPL's estimate for the next round."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "players": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Player names to look up, e.g. ['Saka', 'Haaland']. "
+                            "Case-insensitive; matches first, second or web name."
+                        ),
+                    },
+                    "statuses": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["a", "d", "i", "s", "u", "n"]},
+                        "description": "Only return players with these FPL status codes.",
+                    },
+                },
             },
         ),
     ]
@@ -175,6 +208,12 @@ async def call_tool(
     if name == "query_historical_stats":
         sql = arguments.get("sql", "")
         result = await query_historical_stats(sql)
+
+    elif name == "get_live_availability":
+        result = await get_live_availability(
+            players=arguments.get("players"),
+            statuses=arguments.get("statuses"),
+        )
 
     else:
         raise ValueError(f"Unknown tool: {name!r}")
