@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-08
+
+### Added
+
+- **`get_live_availability` tool.** Returns every player's current FPL injury, suspension
+  and availability flags (status, chance of playing, news note and when it was added),
+  fetched live from the FPL API. It needs no database or ingestion run, so a player flagged
+  an hour ago shows up now. Optional `players` (name lookup) and `statuses` (a/d/i/s/u/n)
+  filters; with none it lists every flagged player, newest news first. The response is
+  cached in memory for 5 minutes, and if FPL is unreachable the last cached copy is served
+  and labelled as possibly out of date.
+
+### Changed
+
+- The `query_historical_stats` tool description now points the model at
+  `get_live_availability` for current flags, since availability in the database is as of
+  the last ingestion run.
+- README and docs now describe both tools.
+
 ## [0.7.1] — 2026-09-30
 
 ### Changed
