@@ -7,6 +7,7 @@ An [MCP](https://modelcontextprotocol.io) server that gives any MCP-capable AI a
 | Tool | What it does |
 |---|---|
 | `query_historical_stats` | Runs a read-only SQL SELECT against a PostgreSQL database of FPL player, fixture and gameweek stats (whatever seasons you've ingested), including each player's FPL status, chance of playing, and injury/news note |
+| `get_live_availability` | Fetches every player's current FPL injury, suspension and availability flags live from FPL — no database or ingestion needed — so a player flagged an hour ago shows up now |
 
 An ingestion job keeps that data populated and current:
 
@@ -16,7 +17,7 @@ An ingestion job keeps that data populated and current:
 
 **What it doesn't do: press coverage.** Match reports, manager quotes and press-conference news aren't included — publishers' terms don't allow their articles to be stored and served through an AI tool. The tool description tells the model to use its own web search for that, which Claude, ChatGPT and Gemini all have. The division of labour: this server answers "who's injured, who's in form, what are the fixtures"; the AI's web search answers "what did the manager say".
 
-> **This server does not fetch live data per-question.** The tool only reads whatever is already sitting in *your* PostgreSQL database. It starts out **empty** — you must run the ingestion job once to seed it, and then keep running it **on a recurring schedule forever**, or answers will silently go stale. This is not a one-time setup step. See [Keeping data fresh (ongoing)](#keeping-data-fresh-ongoing) — it's the single most important thing to get right before handing this to anyone.
+> **`query_historical_stats` only reads what is already in *your* PostgreSQL database.** It starts out **empty** — you must run the ingestion job once to seed it, and then keep running it **on a recurring schedule forever**, or its answers will silently go stale. This is not a one-time setup step. See [Keeping data fresh (ongoing)](#keeping-data-fresh-ongoing). `get_live_availability` is the exception: it needs no database and always returns FPL's current injury and suspension flags.
 
 ---
 
@@ -124,6 +125,7 @@ DATABASE_ETL_URL=postgresql://fpl_etl:password@localhost:5432/fpl
 | Component | Variables required |
 |---|---|
 | `query_historical_stats` tool | `DATABASE_URL` |
+| `get_live_availability` tool | None (outbound HTTPS access to `fantasy.premierleague.com`) |
 | `ingest_match_data` job | `DATABASE_ETL_URL` (or `DATABASE_URL`) |
 
 Run `fpl-context-mcp --check` any time to confirm all of the above are set correctly and reachable — see [Verifying connectivity](#verifying-connectivity---check).
@@ -463,6 +465,30 @@ Executes a read-only SQL `SELECT` against the historical stats database.
 
 The tool enforces two layers of protection: a keyword blocklist rejects `INSERT`, `UPDATE`, `DELETE`, `DROP`, and similar statements before any database call is made, and the database connection uses a read-only role with no write grants.
 
+### `get_live_availability`
+
+Current FPL injury, suspension and availability flags, fetched live from the FPL API. Use it before recommending or captaining a player, so a newly flagged player isn't missed. It needs no database and no ingestion run.
+
+**Parameters** (all optional)
+
+| Parameter | Type | Description |
+|---|---|---|
+| `players` | array of strings | Names to look up, e.g. `["Saka", "Haaland"]`. Case-insensitive; matches first, second or web name. Matching players are returned even when fully available. |
+| `statuses` | array of strings | Only return players with these FPL status codes: `a` available, `d` doubtful, `i` injured, `s` suspended, `u` unavailable, `n` not in squad. |
+
+With no arguments it returns every player who currently has a flag (any status other than `a`, or a news note), newest news first, capped at 100 rows. Each row has the player, team, position, status, FPL's chance of playing next round, the news note and when it was added.
+
+**Example prompts**
+
+- *"Is Saka fit for this gameweek?"*
+- *"Who has been suspended or ruled out in the last few days?"*
+- *"Before I set my captain, check that Haaland and Salah have no flags."*
+
+**How it behaves**
+
+- One request to FPL's `bootstrap-static` endpoint returns every player, and the response is cached in memory for 5 minutes, so heavy use costs FPL only a few calls an hour per server process.
+- If FPL can't be reached, the last cached copy is served and labelled as possibly out of date. With no cached copy it returns an error pointing at `query_historical_stats`, which has availability as of the last ingestion run.
+
 ---
 
 ## Database schema
@@ -535,7 +561,7 @@ The package ships no data. The ingestion jobs fetch it, on your machine and unde
 
 | Source | Used for | Notes |
 |---|---|---|
-| Fantasy Premier League API (`fantasy.premierleague.com/api`) | Players, teams, fixtures, match stats, injury/availability news | Unofficial and undocumented; it can change or rate-limit without notice. |
+| Fantasy Premier League API (`fantasy.premierleague.com/api`) | Players, teams, fixtures, match stats, injury/availability news (ingested into PostgreSQL, and fetched live by `get_live_availability`) | Unofficial and undocumented; it can change or rate-limit without notice. |
 
 **No news articles.** The server doesn't store or serve press coverage. For match reports, quotes and press-conference news, let your AI client use its own web search.
 
