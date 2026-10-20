@@ -28,6 +28,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on the six tables only, connection limit, read-only transactions, server-side
   statement/lock/idle timeouts), because on a shared endpoint the role, not the keyword
   blocklist, is what bounds arbitrary SELECTs.
+- **`scripts/canary.py` and a `canary.yml` workflow** that check a hosted endpoint every 15
+  minutes: it must initialise, answer a live tool, and (if the SQL tool is offered) hold
+  data no more than one finished gameweek behind FPL, which catches a stalled ingestion
+  job. Configure with the `MCP_CANARY_URL` variable (and `MCP_CANARY_TOKEN` secret for keyed
+  endpoints); it skips quietly when unset.
+- **`docs/hosting.md`**: a checklist for running a public endpoint (database role, container,
+  TLS, proxy IP header, monitoring), auth modes (open for ChatGPT/claude.ai connectors vs
+  keyed), sizing and what you take on.
 - The SQL tool now times out connecting after 5 seconds and no longer echoes connection
   errors (hostnames) back to the caller.
 

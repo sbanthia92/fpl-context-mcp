@@ -424,6 +424,8 @@ and the OpenAI Agents SDK / Responses API MCP tool (`headers={"Authorization": "
 
 > **ChatGPT and claude.ai connectors only support OAuth or no authentication — not a static bearer token.** To use them you currently have to leave `MCP_AUTH_TOKEN` unset (the endpoint is then open to anyone who finds the URL) or put an OAuth-capable proxy in front. If you run it open, understand what that exposes: anyone can run read-only `SELECT`s against the database behind `DATABASE_URL` (10-second timeout, 100-row cap). Only do that with the dedicated `fpl_readonly` role on a database that holds nothing but FPL data. The server logs a warning at startup when it's bound to a non-local address without a token.
 
+**Running a public endpoint?** See the [hosting guide](docs/hosting.md): database role, container, proxy setup, auth modes, and a canary that checks the endpoint and its data freshness every 15 minutes.
+
 **Container.** A [`Dockerfile`](Dockerfile) is included: `docker build -t fpl-context-mcp .`, then run it with `DATABASE_URL` (and `MCP_AUTH_TOKEN`) set. It runs as a non-root user, listens on `$MCP_PORT` / `$PORT` / 8000, defaults to a rate limit of 120 requests a minute, and has a health check on `/health`.
 
 **Where the data comes from.** A hosted server reads *your* database, exactly like a local one — you still need the ingestion job on a schedule ([Keeping data fresh](#keeping-data-fresh-ongoing)). And because you're now serving results to other people, see [Data sources and disclaimer](#data-sources-and-disclaimer).

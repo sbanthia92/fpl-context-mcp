@@ -53,6 +53,9 @@ fpl-context-mcp/
     test_server_http.py
   db/
     schema.sql                     # Reference PostgreSQL schema for standalone provisioning
+  Dockerfile                       # Hosted HTTP server image (non-root, health check)
+  docs/hosting.md                  # Running a public endpoint: checklist, auth modes, canary
+  scripts/canary.py                # Health + data-freshness check of a hosted endpoint
   pyproject.toml
   CHANGELOG.md
   LICENSE                          # MIT

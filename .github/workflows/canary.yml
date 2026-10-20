@@ -1,0 +1,32 @@
+name: Canary
+
+# Calls the hosted endpoint and fails if it is down, erroring, or serving stale data.
+# Configure the repository variable MCP_CANARY_URL (e.g. https://mcp.example.com/mcp) and,
+# if the endpoint uses bearer keys, the secret MCP_CANARY_TOKEN. See docs/hosting.md.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  canary:
+    name: Check hosted endpoint
+    runs-on: ubuntu-latest
+    # Skip quietly on forks and before the endpoint is configured.
+    if: ${{ vars.MCP_CANARY_URL != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install client dependencies
+        run: python -m pip install "mcp>=1.8.0,<2.0.0" "requests>=2.32.0"
+
+      - name: Run canary
+        env:
+          MCP_CANARY_URL: ${{ vars.MCP_CANARY_URL }}
+          MCP_CANARY_TOKEN: ${{ secrets.MCP_CANARY_TOKEN }}
+        run: python scripts/canary.py
