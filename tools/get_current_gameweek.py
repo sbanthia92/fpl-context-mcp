@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 
 
 def _describe(ev: dict, now: datetime) -> list[str]:
-    lines = [f"Gameweek {ev['id']} ({ev['name']})"]
+    lines = [f"Gameweek {ev['id']}"]
     deadline = ev.get("deadline_time")
     if deadline:
         when = datetime.fromisoformat(deadline.replace("Z", "+00:00"))

@@ -33,6 +33,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     expected minutes, availability and fixture difficulty, shown beside FPL's own
     `ep_next`. Deliberately simple and noisy early in a season; documented as such.
 
+- **MCP prompts**: `captain_pick`, `transfer_plan` and `chip_timing` appear as slash
+  commands in clients that support prompts. Each tells the model which tools to call, in
+  what order, and how to present the answer; all arguments (`team_id`, `gameweek`,
+  `free_transfers`, `gameweeks`, `chip`) are optional.
+- **MCP resources**: `fpl://schema` (the database schema, listed only when `DATABASE_URL`
+  is set) and `fpl://glossary` (status codes, FDR, positions and a which-tool-answers-what
+  guide).
+- Schema drift hint: when `query_historical_stats` hits a missing table or column, the error
+  now points at `fpl://schema` and at re-running `fpl-context-ingest-match` / applying
+  `db/schema.sql`, instead of leaving the model with a bare Postgres error.
+
 ### Changed
 
 - `query_historical_stats` is only listed when `DATABASE_URL` is set, so a database-free

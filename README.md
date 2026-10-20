@@ -30,6 +30,8 @@ An ingestion job keeps that database populated and current:
 
 > **`query_historical_stats` only reads what is already in *your* PostgreSQL database.** It starts out **empty**: you must run the ingestion job once to seed it, and then keep running it **on a recurring schedule forever**, or its answers will silently go stale. See [Keeping data fresh (ongoing)](#keeping-data-fresh-ongoing). The live tools need none of this; they always return FPL's current data.
 
+**Prompts and resources.** Clients that support MCP prompts show `captain_pick`, `transfer_plan` and `chip_timing` as slash commands (for example `/mcp__fpl-context__captain_pick` in Claude Code); each walks the model through the right tools. Two resources, `fpl://schema` (the database schema; only listed when a database is configured) and `fpl://glossary` (status codes, FDR, which tool answers what), can be attached as context. See [Prompts and resources](#prompts-and-resources).
+
 ---
 
 ## Contents
@@ -48,6 +50,7 @@ An ingestion job keeps that database populated and current:
 - [Verifying connectivity (--check)](#verifying-connectivity---check)
 - [Dry-run mode](#dry-run-mode)
 - [MCP tools reference](#mcp-tools-reference)
+- [Prompts and resources](#prompts-and-resources)
 - [Database schema](#database-schema)
 - [Running tests](#running-tests)
 - [Data sources and disclaimer](#data-sources-and-disclaimer)
@@ -587,6 +590,27 @@ With no arguments it returns every player who currently has a flag (any status o
 
 - One request to FPL's `bootstrap-static` endpoint returns every player, and the response is cached in memory for 5 minutes, so heavy use costs FPL only a few calls an hour per server process.
 - If FPL can't be reached, the last cached copy is served and labelled as possibly out of date. With no cached copy it returns an error pointing at `query_historical_stats`, which has availability as of the last ingestion run.
+
+---
+
+## Prompts and resources
+
+### Prompts
+
+Ready-made workflows. They contain instructions only, no data, so they never go stale: the tools fetch live FPL data when the prompt runs. Every argument is optional; without `team_id` the model asks for your squad or answers generally.
+
+| Prompt | Arguments | What it does |
+|---|---|---|
+| `captain_pick` | `team_id`, `gameweek` | Ranks candidates with `get_xpts`, checks fixtures and availability, and recommends a captain, vice-captain and a differential |
+| `transfer_plan` | `team_id`, `free_transfers`, `gameweeks` | Finds your weakest assets, compares fixture runs and expected points for replacements within budget, and recommends one or two transfers (and whether a hit is worth it) |
+| `chip_timing` | `team_id`, `chip` (`wildcard`, `freehit`, `bboost`, `3xc`) | Looks for double and blank gameweeks and suggests when to play each chip you have left |
+
+### Resources
+
+| URI | Contents |
+|---|---|
+| `fpl://schema` | Tables and columns available to `query_historical_stats`. Only listed when `DATABASE_URL` is set. If a query fails on a missing table or column, the error points here: a documented column that is missing from your database usually means it was provisioned by an older version, so re-run `fpl-context-ingest-match` or apply the missing columns from [`db/schema.sql`](db/schema.sql). |
+| `fpl://glossary` | FPL status codes, FDR, positions, and which tool answers what |
 
 ---
 

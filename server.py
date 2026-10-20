@@ -14,6 +14,9 @@ Exposes these tools over MCP, via stdio (default) or streamable HTTP:
   get_fixture_run          — upcoming fixture difficulty, one team or a ranked ticker
   get_xpts                 — estimated expected points for a gameweek
 
+Also exposes MCP prompts (captain_pick, transfer_plan, chip_timing: slash commands in
+many clients) and resources (fpl://schema, fpl://glossary).
+
 All tools except query_historical_stats call the public FPL API directly and need no
 database, so ``uvx fpl-context-mcp`` works with zero setup.
 
@@ -40,6 +43,7 @@ from collections.abc import Awaitable, Callable
 
 import mcp.types as types
 from mcp.server import Server
+from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.stdio import stdio_server
 
 from config import cfg
@@ -49,10 +53,15 @@ from tools.get_fixtures import get_fixtures
 from tools.get_live_availability import get_live_availability
 from tools.get_manager_squad import get_manager_squad
 from tools.get_xpts import get_xpts
+from tools.prompts import get_prompt as render_prompt
+from tools.prompts import list_prompts as _list_prompts
 from tools.query_historical_stats import (
     SCHEMA_DESCRIPTION,
     query_historical_stats,
 )
+from tools.resources import SCHEMA_URI
+from tools.resources import list_resources as _list_resources
+from tools.resources import read_resource as _read_resource
 from tools.search_players import SORT_FIELDS, search_players
 
 logging.basicConfig(
@@ -461,6 +470,28 @@ async def call_tool(
         raise ValueError(f"Unknown tool: {name!r}")
     result = await entry[1](arguments or {})
     return [types.TextContent(type="text", text=result)]
+
+
+@server.list_prompts()
+async def list_prompts() -> list[types.Prompt]:
+    """Ready-made workflows (captain pick, transfer plan, chip timing) shown as slash commands."""
+    return _list_prompts()
+
+
+@server.get_prompt()
+async def get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
+    return render_prompt(name, arguments)
+
+
+@server.list_resources()
+async def list_resources() -> list[types.Resource]:
+    """Reference material: an FPL glossary, and the database schema when a database is set."""
+    return [r for r in _list_resources() if str(r.uri) != SCHEMA_URI or _database_configured()]
+
+
+@server.read_resource()
+async def read_resource(uri) -> list[ReadResourceContents]:
+    return [ReadResourceContents(content=_read_resource(str(uri)), mime_type="text/plain")]
 
 
 def _warn_if_dry_run() -> None:

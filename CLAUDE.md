@@ -36,6 +36,8 @@ fpl-context-mcp/
     get_manager_squad.py           # MCP tool: manager squad + chips by team ID (no DB)
     get_fixture_run.py             # MCP tool: fixture-run difficulty / ticker (no DB)
     get_xpts.py                    # MCP tool: baseline expected-points ranking (no DB)
+    prompts.py                     # MCP prompts: captain_pick, transfer_plan, chip_timing
+    resources.py                   # MCP resources: fpl://schema, fpl://glossary
   jobs/
     ingest_match_data.py           # PostgreSQL updater: FPL, all fixtures + stats delta
     backfill_history.py            # One-time: past-season player totals from FPL history_past
@@ -45,6 +47,7 @@ fpl-context-mcp/
     test_tools_stats.py
     test_tools_availability.py
     test_tools_live.py
+    test_prompts_resources.py
     test_ingest_match_data.py
     test_backfill_history.py
     test_server_http.py
@@ -160,6 +163,15 @@ Fetches FPL `bootstrap-static` on demand and returns each player's `status`,
   with a note, or returns an error pointing at `query_historical_stats` when there is none
 - Sync `requests` run via `asyncio.to_thread` — do not add a second HTTP client
 - The `query_historical_stats` tool description points the model at this tool for current flags
+
+### Prompts and resources
+- `tools/prompts.py`: `captain_pick`, `transfer_plan`, `chip_timing`. Instruction text only
+  (no data, so never stale); arguments optional and validated (numeric ids, chip whitelist).
+  If you rename or change a tool, update the tool names inside these prompts.
+- `tools/resources.py`: `fpl://schema` (same text as `SCHEMA_DESCRIPTION`; hidden without
+  `DATABASE_URL`) and `fpl://glossary`. Keep the glossary's tool guide in sync when tools change.
+- `query_historical_stats` appends a hint pointing at `fpl://schema` on undefined table/column
+  errors (schema drift between package versions).
 
 ## Ingestion jobs
 
