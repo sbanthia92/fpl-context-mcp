@@ -10,7 +10,9 @@ An [MCP](https://modelcontextprotocol.io) server that gives any MCP-capable AI a
 |---|---|
 | `get_current_gameweek` | The current and next gameweek and the transfer deadline |
 | `get_fixtures` | Fixtures with FPL's difficulty rating (FDR, 1 to 5): every team, one team's run, or a single gameweek |
+| `get_fixture_run` | How hard a team's next few fixtures are (average FDR, home/away, blank and double gameweeks), or a ranked fixture ticker for all 20 teams |
 | `search_players` | Find and rank players by name, team, position and max price; sort by points, form, price, ownership, expected points and more |
+| `get_xpts` | Estimated expected points for a gameweek by position, team and price, built from underlying stats, expected minutes, availability and fixture difficulty |
 | `get_manager_squad` | A manager's squad, captain, bench, bank, transfers and chips used, from their FPL team ID |
 | `get_live_availability` | Every player's current injury, suspension and availability flags, so a player flagged an hour ago shows up now |
 
@@ -144,7 +146,7 @@ DATABASE_ETL_URL=postgresql://fpl_etl:password@localhost:5432/fpl
 | Component | Variables required |
 |---|---|
 | `query_historical_stats` tool | `DATABASE_URL` (when unset the tool is simply not offered) |
-| Live tools (`get_current_gameweek`, `get_fixtures`, `search_players`, `get_manager_squad`, `get_live_availability`) | None (outbound HTTPS access to `fantasy.premierleague.com`) |
+| Live tools (`get_current_gameweek`, `get_fixtures`, `get_fixture_run`, `search_players`, `get_xpts`, `get_manager_squad`, `get_live_availability`) | None (outbound HTTPS access to `fantasy.premierleague.com`) |
 | `ingest_match_data` job | `DATABASE_ETL_URL` (or `DATABASE_URL`) |
 
 Run `fpl-context-mcp --check` any time to confirm all of the above are set correctly and reachable — see [Verifying connectivity](#verifying-connectivity---check).
@@ -499,7 +501,7 @@ The tool enforces two layers of protection: a keyword blocklist rejects `INSERT`
 
 ### Live tools overview
 
-These five tools call the public FPL API directly and need no database or configuration. They share one cache: FPL's `bootstrap-static` data (every player and team) is downloaded once and reused for 5 minutes across tools, a manager's picks for 2 minutes. If FPL can't be reached, the last cached copy is served and labelled as possibly out of date. All are read-only and advertise `readOnlyHint`, so clients can skip approval prompts. Team arguments accept a full name, a short name or a unique fragment (`Arsenal`, `MCI`, `Man City`).
+These seven tools call the public FPL API directly and need no database or configuration. They share one cache: FPL's `bootstrap-static` data (every player and team) is downloaded once and reused for 5 minutes across tools, a manager's picks for 2 minutes. If FPL can't be reached, the last cached copy is served and labelled as possibly out of date. All are read-only and advertise `readOnlyHint`, so clients can skip approval prompts. Team arguments accept a full name, a short name or a unique fragment (`Arsenal`, `MCI`, `Man City`).
 
 ### `get_current_gameweek`
 
@@ -517,6 +519,15 @@ Fixtures with FPL's difficulty rating (FDR): 1 easiest, 5 hardest, from each tea
 
 *"Arsenal's next six fixtures?"*, *"What are the fixtures in gameweek 12?"*
 
+### `get_fixture_run`
+
+| Parameter | Type | Description |
+|---|---|---|
+| `team` | string | Optional. Omit to rank all 20 teams, easiest run first. |
+| `gameweeks` | integer 1-38 | Optional. Window length starting from the next gameweek to play (default 5). |
+
+For one team you get the average FDR, home/away split, the fixture-by-fixture sequence and any blank or double gameweeks. *"Who has the best fixtures for the next six gameweeks?"*, *"Is Chelsea's run good enough to keep Palmer?"*
+
 ### `search_players`
 
 | Parameter | Type | Description |
@@ -529,6 +540,20 @@ Fixtures with FPL's difficulty rating (FDR): 1 easiest, 5 hardest, from each tea
 | `limit` | integer | Rows to return (default 15, max 50). |
 
 Each row has price, total points, form, ownership, FPL's expected points for the next gameweek (`ep_next`) and availability status. *"Best midfielders under £8m by form?"*
+
+### `get_xpts`
+
+| Parameter | Type | Description |
+|---|---|---|
+| `position` | `GKP` / `DEF` / `MID` / `FWD` | Optional. |
+| `team` | string | Optional. |
+| `max_price` | number | Optional, in £m. |
+| `gameweek` | integer 1-38 | Optional. Defaults to the next gameweek to play. |
+| `limit` | integer | Rows to return (default 15, max 50). |
+
+Ranks players by estimated expected points (`xPts`) next to the opponent and its FDR, expected minutes, and FPL's own `ep_next`. Double gameweeks count both fixtures; blank ones score zero; flagged players are discounted by FPL's chance of playing.
+
+**How `xPts` is computed.** A simple, transparent baseline, not a forecast model: appearance points, plus the player's season xG, xA, clean-sheet, saves and bonus rates per 90 times FPL's scoring values, scaled by expected minutes (the share of available minutes played so far), multiplied by ±10% per FDR point from a neutral 3, and discounted by availability. It extrapolates the season so far, so it is noisy in the first few gameweeks and cannot see rotation, tactics or set-piece changes. Use it to build a shortlist, then cross-check with `get_live_availability`. *"Top five midfielders under £8m by expected points?"*
 
 ### `get_manager_squad`
 

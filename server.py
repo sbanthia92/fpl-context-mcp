@@ -11,6 +11,8 @@ Exposes these tools over MCP, via stdio (default) or streamable HTTP:
   get_fixtures             — live fixtures with difficulty ratings (FDR)
   search_players           — live player search and ranking
   get_manager_squad        — a manager's squad and chips by FPL team ID
+  get_fixture_run          — upcoming fixture difficulty, one team or a ranked ticker
+  get_xpts                 — estimated expected points for a gameweek
 
 All tools except query_historical_stats call the public FPL API directly and need no
 database, so ``uvx fpl-context-mcp`` works with zero setup.
@@ -42,9 +44,11 @@ from mcp.server.stdio import stdio_server
 
 from config import cfg
 from tools.get_current_gameweek import get_current_gameweek
+from tools.get_fixture_run import get_fixture_run
 from tools.get_fixtures import get_fixtures
 from tools.get_live_availability import get_live_availability
 from tools.get_manager_squad import get_manager_squad
+from tools.get_xpts import get_xpts
 from tools.query_historical_stats import (
     SCHEMA_DESCRIPTION,
     query_historical_stats,
@@ -333,6 +337,77 @@ _register(
         annotations=_ro("Manager squad and chips"),
     ),
     lambda a: get_manager_squad(team_id=a.get("team_id"), gameweek=a.get("gameweek")),
+)
+
+
+_register(
+    types.Tool(
+        name="get_fixture_run",
+        description=(
+            "How easy or hard a team's next few fixtures are, live from the FPL API (no "
+            "database needed): average FDR (1 easiest, 5 hardest), home/away split, and "
+            "blank or double gameweeks. Pass team for its fixture-by-fixture run; omit it "
+            "to rank all 20 teams, easiest run first. Prefer this over get_fixtures when "
+            "judging transfers, captaincy or chip timing."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "team": _TEAM_PARAM,
+                "gameweeks": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 38,
+                    "description": "Window length from the next gameweek (default 5).",
+                },
+            },
+        },
+        annotations=_ro("Fixture run difficulty"),
+    ),
+    lambda a: get_fixture_run(team=a.get("team"), gameweeks=a.get("gameweeks")),
+)
+
+_register(
+    types.Tool(
+        name="get_xpts",
+        description=(
+            "Rank players by estimated expected points (xPts) for a gameweek, live from "
+            "the FPL API (no database needed). A transparent baseline built from season "
+            "xG/xA/clean-sheet/save/bonus rates, expected minutes, availability and fixture "
+            "difficulty, shown beside FPL's own ep_next. Filter by position, team and max "
+            "price. Good for captain shortlists and finding transfer targets; it is "
+            "noisy early in the season and ignores rotation, so cross-check availability "
+            "with get_live_availability."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "position": {"type": "string", "enum": ["GKP", "DEF", "MID", "FWD"]},
+                "team": _TEAM_PARAM,
+                "max_price": {"type": "number", "description": "Maximum price in £m, e.g. 7.5."},
+                "gameweek": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 38,
+                    "description": "Gameweek to project (default: the next one to play).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "description": "Rows to return (default 15).",
+                },
+            },
+        },
+        annotations=_ro("Expected points ranking"),
+    ),
+    lambda a: get_xpts(
+        position=a.get("position"),
+        team=a.get("team"),
+        max_price=a.get("max_price"),
+        gameweek=a.get("gameweek"),
+        limit=a.get("limit"),
+    ),
 )
 
 

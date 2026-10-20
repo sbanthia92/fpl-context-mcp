@@ -10,8 +10,10 @@ import pytest
 
 from tools import fpl_client
 from tools.get_current_gameweek import get_current_gameweek
+from tools.get_fixture_run import get_fixture_run
 from tools.get_fixtures import get_fixtures
 from tools.get_manager_squad import get_manager_squad
+from tools.get_xpts import estimate_xpts, get_xpts
 from tools.search_players import search_players
 
 BOOTSTRAP = {
@@ -333,3 +335,113 @@ async def test_query_tool_hidden_without_database(monkeypatch):
     names = {t.name for t in await server.list_tools()}
     assert "query_historical_stats" not in names
     assert "get_fixtures" in names
+
+
+# --- get_fixture_run ---------------------------------------------------------
+
+
+async def test_fixture_run_single_team():
+    out = await get_fixture_run(team="Arsenal", gameweeks=2)
+    assert "Arsenal: GW3-GW4" in out
+    assert "2 fixtures, average FDR 3.50, 1 home / 1 away" in out
+    assert "GW3 MCI(A) 5" in out and "GW4 MUN(H) 2" in out
+
+
+async def test_fixture_run_flags_blanks():
+    out = await get_fixture_run(team="MCI", gameweeks=2)
+    assert "Blank gameweek(s): GW4" in out
+
+
+async def test_fixture_run_ranks_all_teams_easiest_first():
+    out = await get_fixture_run(gameweeks=2)
+    teams = [line.split(" | ")[0] for line in out.splitlines()[4:7]]
+    assert teams == ["MCI", "ARS", "MUN"]  # avg FDR 2.0, 3.5, 4.0
+
+
+async def test_fixture_run_double_gameweek():
+    doubled = [*FIXTURES, {**FIXTURES[1], "team_h": 1, "team_a": 3}]
+    with patch.object(
+        fpl_client,
+        "_fetch",
+        side_effect=lambda p: doubled if p == "fixtures/" else fake_fetch(p),
+    ):
+        out = await get_fixture_run(team="Arsenal", gameweeks=1)
+    assert "Double gameweek(s): GW3" in out
+
+
+async def test_fixture_run_validation():
+    assert (await get_fixture_run(gameweeks="x")).startswith("Error: gameweeks")
+    assert "no team matches" in await get_fixture_run(team="Nope")
+
+
+# --- get_xpts ----------------------------------------------------------------
+
+STAR = {
+    "element_type": 4,
+    "minutes": 180,
+    "status": "a",
+    "chance_of_playing_next_round": None,
+    "expected_goals_per_90": "0.8",
+    "expected_assists_per_90": "0.2",
+    "bonus": 3,
+}
+
+
+def test_estimate_scales_with_fixture_difficulty():
+    easy = estimate_xpts(STAR, [{"fdr": 2}], 2)["xpts"]
+    hard = estimate_xpts(STAR, [{"fdr": 5}], 2)["xpts"]
+    assert easy > hard > 0
+
+
+def test_estimate_double_and_blank_and_availability():
+    single = estimate_xpts(STAR, [{"fdr": 3}], 2)["xpts"]
+    assert estimate_xpts(STAR, [{"fdr": 3}, {"fdr": 3}], 2)["xpts"] == pytest.approx(2 * single)
+    assert estimate_xpts(STAR, [], 2)["xpts"] == 0
+    half = {**STAR, "chance_of_playing_next_round": 50}
+    assert estimate_xpts(half, [{"fdr": 3}], 2)["xpts"] == pytest.approx(single / 2)
+    assert estimate_xpts({**STAR, "status": "s"}, [{"fdr": 3}], 2)["xpts"] == 0
+    assert estimate_xpts({**STAR, "minutes": 0}, [{"fdr": 3}], 2)["xpts"] == 0
+
+
+def test_estimate_rewards_clean_sheets_for_defenders_not_forwards():
+    base = {**STAR, "expected_goals_per_90": "0", "expected_assists_per_90": "0", "bonus": 0}
+    cs = {"clean_sheets_per_90": "0.5"}
+    defender = estimate_xpts({**base, **cs, "element_type": 2}, [{"fdr": 3}], 2)["xpts"]
+    forward = estimate_xpts({**base, **cs, "element_type": 4}, [{"fdr": 3}], 2)["xpts"]
+    assert defender == pytest.approx(forward + 0.5 * 4)
+
+
+async def test_xpts_ranks_and_shows_fixture_and_ep_next():
+    boot = {
+        **BOOTSTRAP,
+        "elements": [
+            {**BOOTSTRAP["elements"][0], **STAR, "element_type": 3, "minutes": 180},
+            {**BOOTSTRAP["elements"][1], **STAR, "expected_goals_per_90": "1.2", "minutes": 180},
+            {**BOOTSTRAP["elements"][2], "minutes": 0},
+        ],
+    }
+
+    def fetch(path):
+        return boot if path == "bootstrap-static/" else fake_fetch(path)
+
+    with patch.object(fpl_client, "_fetch", side_effect=fetch):
+        out = await get_xpts()
+    lines = out.splitlines()
+    assert lines[4].startswith("Haaland") and "ARS(H) 2" in lines[4] and "7.0" in lines[4]
+    assert lines[5].startswith("Saka") and "MCI(A) 5" in lines[5]
+    assert "Foden" not in out  # no minutes
+
+
+async def test_xpts_validation_and_blank():
+    assert (await get_xpts(position="x")).startswith("Error: position")
+    assert (await get_xpts(gameweek=0)).startswith("Error: gameweek")
+    assert "No players with minutes" in await get_xpts()  # fixture data players have 0 minutes
+
+
+async def test_server_lists_typed_tools():
+    import server
+
+    names = {t.name for t in await server.list_tools()}
+    assert {"get_fixture_run", "get_xpts"} <= names
+    result = await server.call_tool("get_fixture_run", {"team": "Arsenal"})
+    assert "Arsenal" in result[0].text

@@ -24,6 +24,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   download. `get_live_availability` now uses it too.
 - Every tool is annotated `readOnlyHint`, so clients can skip approval prompts.
 
+- **Typed tools for the questions people actually ask**, so the model doesn't have to
+  write SQL:
+  - `get_fixture_run` — average FDR, home/away split and blank/double gameweeks for a
+    team's next N gameweeks; with no team, ranks all 20 teams (a fixture ticker).
+  - `get_xpts` — estimated expected points for a gameweek by position / team / price. A
+    transparent baseline built from season xG, xA, clean-sheet, save and bonus rates,
+    expected minutes, availability and fixture difficulty, shown beside FPL's own
+    `ep_next`. Deliberately simple and noisy early in a season; documented as such.
+
 ### Changed
 
 - `query_historical_stats` is only listed when `DATABASE_URL` is set, so a database-free

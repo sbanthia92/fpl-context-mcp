@@ -34,6 +34,8 @@ fpl-context-mcp/
     get_fixtures.py                # MCP tool: fixtures with FDR (no DB)
     search_players.py              # MCP tool: player search/ranking (no DB)
     get_manager_squad.py           # MCP tool: manager squad + chips by team ID (no DB)
+    get_fixture_run.py             # MCP tool: fixture-run difficulty / ticker (no DB)
+    get_xpts.py                    # MCP tool: baseline expected-points ranking (no DB)
   jobs/
     ingest_match_data.py           # PostgreSQL updater: FPL, all fixtures + stats delta
     backfill_history.py            # One-time: past-season player totals from FPL history_past
@@ -135,6 +137,8 @@ their inputs, and resolve team names through `fpl_client.resolve_team`.
 | `get_current_gameweek` | bootstrap `events` | current/next GW + deadline |
 | `get_fixtures` | `fixtures/` | FDR; `team` flips to that team's point of view; default next 5 GWs |
 | `search_players` | bootstrap `elements` | filters name/team/position/max_price; sort whitelist `SORT_FIELDS`; limit ≤ 50 |
+| `get_fixture_run` | bootstrap + `fixtures/` | avg FDR, home/away, blanks/doubles; no team → ranked ticker |
+| `get_xpts` | bootstrap + `fixtures/` | baseline xPts from per-90 rates × expected minutes × availability × FDR; shown beside `ep_next`. Keep the "baseline, noisy early season" caveat in output and docs |
 | `get_manager_squad` | `entry/{id}/`, `/event/{gw}/picks/`, `/history/` | public endpoints; 404 → "no data for team" |
 
 ### `query_historical_stats`
