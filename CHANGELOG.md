@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-20
+
+### Added
+
+- **Hosting hardening for the HTTP transport**, so one deployment can safely serve many
+  people:
+  - `MCP_RATE_LIMIT_PER_MIN` — per-caller request limit on `/mcp` (keyed by bearer token,
+    else client IP), answering `429` with `Retry-After`. `/health` is never limited. Off by
+    default; the server warns at startup when it is public with no limit.
+  - `MCP_CLIENT_IP_HEADER` — read the real client IP from a trusted proxy's header
+    (e.g. `Fly-Client-IP`) so the limit isn't applied to the proxy itself.
+  - `MCP_AUTH_TOKEN` now accepts several comma-separated tokens, so each user can have
+    their own key and one can be revoked without rotating the rest.
+  - `MCP_MAX_CONCURRENT_QUERIES` (default 4) — SQL queries beyond the cap wait up to 5
+    seconds, then get a "server busy" answer instead of piling onto the database.
+- The SQL tool now times out connecting after 5 seconds and no longer echoes connection
+  errors (hostnames) back to the caller.
+
 ## [0.9.0] — 2026-10-20
 
 ### Added

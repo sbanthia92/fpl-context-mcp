@@ -410,6 +410,16 @@ claude mcp add --transport http fpl-context https://your-host/mcp --header "Auth
 
 and the OpenAI Agents SDK / Responses API MCP tool (`headers={"Authorization": "Bearer ..."}`).
 
+**Several keys.** `MCP_AUTH_TOKEN` accepts a comma-separated list (`key-alice,key-bob`). Each user can have their own key, and removing one from the list revokes it without touching the others. Rate limits are applied per key.
+
+**Rate limiting and load.** Set these before exposing a server publicly:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MCP_RATE_LIMIT_PER_MIN` | `0` (off) | Max requests per minute to `/mcp` for each caller (their bearer token, else their IP). Over the limit gets `429` with a `Retry-After` header. One tool call is typically 2-3 requests, so leave headroom (120 is a reasonable start). `/health` is never limited. The counter is in memory, so with several replicas each enforces its own limit. |
+| `MCP_CLIENT_IP_HEADER` | (empty) | Behind a proxy, every request appears to come from the proxy. Set this to the header your proxy fills with the real client IP (`Fly-Client-IP`, `CF-Connecting-IP`, `X-Forwarded-For`). Only do this when the proxy overwrites the header; otherwise callers can fake their IP to dodge the limit. |
+| `MCP_MAX_CONCURRENT_QUERIES` | `4` | SQL queries running at once per process. Extras wait up to 5 seconds, then get a "server busy" reply instead of piling onto your database. |
+
 > **ChatGPT and claude.ai connectors only support OAuth or no authentication — not a static bearer token.** To use them you currently have to leave `MCP_AUTH_TOKEN` unset (the endpoint is then open to anyone who finds the URL) or put an OAuth-capable proxy in front. If you run it open, understand what that exposes: anyone can run read-only `SELECT`s against the database behind `DATABASE_URL` (10-second timeout, 100-row cap). Only do that with the dedicated `fpl_readonly` role on a database that holds nothing but FPL data. The server logs a warning at startup when it's bound to a non-local address without a token.
 
 **Where the data comes from.** A hosted server reads *your* database, exactly like a local one — you still need the ingestion job on a schedule ([Keeping data fresh](#keeping-data-fresh-ongoing)). And because you're now serving results to other people, see [Data sources and disclaimer](#data-sources-and-disclaimer).
