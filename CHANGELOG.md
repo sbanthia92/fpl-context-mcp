@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-20
+
+### Added
+
+- **Zero-setup live mode.** Four new tools call the public FPL API directly, so
+  `uvx fpl-context-mcp` works in Claude Desktop with no database and no ingestion:
+  - `get_current_gameweek` — current and next gameweek and the transfer deadline.
+  - `get_fixtures` — fixtures with FPL's difficulty rating (FDR), for all teams, one team
+    (from its own point of view) or one gameweek.
+  - `search_players` — find and rank players by name, team, position and max price, sorted
+    by points, form, price, ownership, `ep_next` and more.
+  - `get_manager_squad` — a manager's squad, captain, bench, bank, transfers and the chips
+    they've used, by FPL team ID.
+- `tools/fpl_client.py`: one shared, cached FPL client (per-path TTL cache, stale fallback
+  when FPL is unreachable, bounded size). All live tools share a single `bootstrap-static`
+  download. `get_live_availability` now uses it too.
+- Every tool is annotated `readOnlyHint`, so clients can skip approval prompts.
+
+### Changed
+
+- `query_historical_stats` is only listed when `DATABASE_URL` is set, so a database-free
+  install never shows the model a tool that can only fail.
+- `DATABASE_URL` is no longer a required variable in the MCP Registry metadata.
+
 ## [0.8.0] — 2026-10-08
 
 ### Added

@@ -1,8 +1,9 @@
 # fpl-context-mcp
 
-Standalone MCP server that exposes Fantasy Premier League stats, fixtures and player
-injury/availability as a read-only SQL MCP tool, a live availability tool, plus threaded
-ingestion jobs that keep the underlying PostgreSQL database up to date.
+Standalone MCP server that exposes live Fantasy Premier League data (gameweek, fixtures with FDR,
+player search, manager squads, injury/availability) straight from the public FPL API with zero
+setup, plus an optional read-only SQL tool over a PostgreSQL history database and threaded
+ingestion jobs that keep that database up to date.
 
 **Licensing guardrail.** Only ingest or serve data from sources whose terms permit use through
 an AI tool (currently the FPL API). Do not add a publisher-content source without a licence that
@@ -26,8 +27,13 @@ fpl-context-mcp/
   config.py                        # Env-var config
   server.py                        # MCP server entry point (stdio transport)
   tools/
-    query_historical_stats.py      # MCP tool: read-only SQL → PostgreSQL
+    fpl_client.py                  # Shared FPL API client: TTL cache, stale fallback, lookup helpers
+    query_historical_stats.py      # MCP tool: read-only SQL → PostgreSQL (listed only if DATABASE_URL set)
     get_live_availability.py       # MCP tool: live injury/suspension flags from FPL (no DB)
+    get_current_gameweek.py        # MCP tool: current/next gameweek + deadline (no DB)
+    get_fixtures.py                # MCP tool: fixtures with FDR (no DB)
+    search_players.py              # MCP tool: player search/ranking (no DB)
+    get_manager_squad.py           # MCP tool: manager squad + chips by team ID (no DB)
   jobs/
     ingest_match_data.py           # PostgreSQL updater: FPL, all fixtures + stats delta
     backfill_history.py            # One-time: past-season player totals from FPL history_past
@@ -36,6 +42,7 @@ fpl-context-mcp/
     test_config.py
     test_tools_stats.py
     test_tools_availability.py
+    test_tools_live.py
     test_ingest_match_data.py
     test_backfill_history.py
     test_server_http.py
@@ -93,13 +100,13 @@ loaded automatically by `config.py` when `python-dotenv` is installed.
 
 | Variable            | Required | Default      | Purpose |
 |---------------------|----------|--------------|---------|
-| `DATABASE_URL`      | Yes*     | —            | Read-only PostgreSQL DSN (`fpl_readonly` user) |
+| `DATABASE_URL`      | No (SQL tool only) | —  | Read-only PostgreSQL DSN (`fpl_readonly` user). Unset → `query_historical_stats` is not listed; the live tools still work. |
 | `DATABASE_ETL_URL`  | Yes*     | —            | Read/write PostgreSQL DSN (`fpl_etl` user). Falls back to `DATABASE_URL`. |
 | `MCP_AUTH_TOKEN`    | No       | (empty)      | HTTP transport only: require `Authorization: Bearer <token>` on `/mcp`. |
 | `MCP_TRANSPORT` / `MCP_HOST` / `MCP_PORT` (or `PORT`) | No | `stdio` / `127.0.0.1` / `8000` | Defaults for `--transport` / `--host` / `--port`. |
 
-*Required for the respective tool/job to function; the package will start without them
-and log an error on first use.
+The live tools need no configuration. Jobs need their DSN to function; the package starts
+without any of them and logs an error on first use of a DB-backed component.
 
 ## MCP registration (Claude Desktop)
 
@@ -117,8 +124,21 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ## MCP tools exposed
 
+Every tool is registered once in `server.py` via `_register(Tool, handler)` and carries
+`readOnlyHint` annotations. All live tools share `tools/fpl_client.py` (one cached
+`bootstrap-static` download; per-path TTLs; stale fallback; 256-entry cap). Add new live tools
+on top of it — do not add a second HTTP client. Live tools return plain-text tables, validate
+their inputs, and resolve team names through `fpl_client.resolve_team`.
+
+| Tool | Source | Notes |
+|---|---|---|
+| `get_current_gameweek` | bootstrap `events` | current/next GW + deadline |
+| `get_fixtures` | `fixtures/` | FDR; `team` flips to that team's point of view; default next 5 GWs |
+| `search_players` | bootstrap `elements` | filters name/team/position/max_price; sort whitelist `SORT_FIELDS`; limit ≤ 50 |
+| `get_manager_squad` | `entry/{id}/`, `/event/{gw}/picks/`, `/history/` | public endpoints; 404 → "no data for team" |
+
 ### `query_historical_stats`
-Executes a read-only SQL SELECT against the FPL PostgreSQL database.
+Listed only when `DATABASE_URL` is set. Executes a read-only SQL SELECT against the FPL PostgreSQL database.
 - Blocks mutation keywords (INSERT/UPDATE/DELETE/DROP etc.)
 - 10-second statement timeout
 - 100-row result cap

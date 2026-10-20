@@ -2,20 +2,31 @@
 
 <!-- mcp-name: io.github.sbanthia92/fpl-context-mcp -->
 
-An [MCP](https://modelcontextprotocol.io) server that gives any MCP-capable AI agent a queryable Fantasy Premier League (FPL) database: player and match stats, fixtures, gameweeks, and every player's injury/availability status. It runs locally in Claude Desktop, Claude Code, Cursor, VS Code Copilot, Windsurf, Gemini CLI and Codex; ChatGPT and other clients that only accept a URL can connect when you [host it over HTTP](#remote-access-over-http-chatgpt-and-other-url-only-clients).
+An [MCP](https://modelcontextprotocol.io) server that gives any MCP-capable AI agent Fantasy Premier League (FPL) data. **It works with zero setup**: install and run it, and your assistant can read the current gameweek, fixtures with difficulty ratings, player stats, any manager's squad and chips, and live injury and suspension flags, all straight from the public FPL API. Optionally, point it at your own PostgreSQL database to also query historical stats with SQL. It runs locally in Claude Desktop, Claude Code, Cursor, VS Code Copilot, Windsurf, Gemini CLI and Codex; ChatGPT and other clients that only accept a URL can connect when you [host it over HTTP](#remote-access-over-http-chatgpt-and-other-url-only-clients).
+
+**Live tools: no database, no configuration**
 
 | Tool | What it does |
 |---|---|
-| `query_historical_stats` | Runs a read-only SQL SELECT against a PostgreSQL database of FPL player, fixture and gameweek stats (whatever seasons you've ingested), including each player's FPL status, chance of playing, and injury/news note |
-| `get_live_availability` | Fetches every player's current FPL injury, suspension and availability flags live from FPL — no database or ingestion needed — so a player flagged an hour ago shows up now |
+| `get_current_gameweek` | The current and next gameweek and the transfer deadline |
+| `get_fixtures` | Fixtures with FPL's difficulty rating (FDR, 1 to 5): every team, one team's run, or a single gameweek |
+| `search_players` | Find and rank players by name, team, position and max price; sort by points, form, price, ownership, expected points and more |
+| `get_manager_squad` | A manager's squad, captain, bench, bank, transfers and chips used, from their FPL team ID |
+| `get_live_availability` | Every player's current injury, suspension and availability flags, so a player flagged an hour ago shows up now |
 
-An ingestion job keeps that data populated and current:
+**Optional: your own history database**
+
+| Tool | What it does |
+|---|---|
+| `query_historical_stats` | Runs a read-only SQL SELECT against a PostgreSQL database of FPL player, fixture and gameweek stats (whatever seasons you've ingested). Only offered when `DATABASE_URL` is set |
+
+An ingestion job keeps that database populated and current:
 
 | Job | What it does |
 |---|---|
 | `ingest_match_data` | Fetches teams, fixtures, players (with availability) and per-match player stats from the FPL API, and writes them to PostgreSQL |
 
-> **`query_historical_stats` only reads what is already in *your* PostgreSQL database.** It starts out **empty** — you must run the ingestion job once to seed it, and then keep running it **on a recurring schedule forever**, or its answers will silently go stale. This is not a one-time setup step. See [Keeping data fresh (ongoing)](#keeping-data-fresh-ongoing). `get_live_availability` is the exception: it needs no database and always returns FPL's current injury and suspension flags.
+> **`query_historical_stats` only reads what is already in *your* PostgreSQL database.** It starts out **empty**: you must run the ingestion job once to seed it, and then keep running it **on a recurring schedule forever**, or its answers will silently go stale. See [Keeping data fresh (ongoing)](#keeping-data-fresh-ongoing). The live tools need none of this; they always return FPL's current data.
 
 ---
 
@@ -44,7 +55,17 @@ An ingestion job keeps that data populated and current:
 
 ## Quickstart
 
-The full path from zero to a working MCP tool, in order. Each step links to details further down.
+### Fastest path: live tools, no database
+
+```bash
+uvx fpl-context-mcp
+```
+
+Register it with your client ([Claude Desktop](#registering-with-claude-desktop) config: `{"mcpServers": {"fpl-context": {"command": "uvx", "args": ["fpl-context-mcp"]}}}`) and ask *"who should I captain this week?"* or *"show Arsenal's next five fixtures"*. That's it. Everything below is only needed for the optional SQL history tool.
+
+### Full path: add the history database
+
+The full path from zero to a working `query_historical_stats` tool, in order. Each step links to details further down.
 
 1. **Install**: `pip install fpl-context-mcp` — see [Installation](#installation).
 2. **Provision storage**: a PostgreSQL database. Run [`db/schema.sql`](db/schema.sql) against a fresh Postgres database — see [Provisioning your database](#provisioning-your-database).
@@ -61,9 +82,9 @@ The full path from zero to a working MCP tool, in order. Each step links to deta
 | Requirement | Version |
 |---|---|
 | Python | 3.11+ |
-| PostgreSQL | Any recent version, with a read-only role (e.g. `fpl_readonly`) and a read/write role (e.g. `fpl_etl`) |
+| PostgreSQL *(optional)* | Any recent version, with a read-only role (e.g. `fpl_readonly`) and a read/write role (e.g. `fpl_etl`). Only needed for `query_historical_stats` |
 
-You provision the database yourself — see the next sections. Free tiers (Neon, Supabase, etc.) are plenty: the data is a few MB per season.
+The live tools need only Python and outbound HTTPS to `fantasy.premierleague.com`. If you want the SQL tool, you provision the database yourself: see the next sections. Free tiers (Neon, Supabase, etc.) are plenty: the data is a few MB per season.
 
 ---
 
@@ -122,8 +143,8 @@ DATABASE_ETL_URL=postgresql://fpl_etl:password@localhost:5432/fpl
 
 | Component | Variables required |
 |---|---|
-| `query_historical_stats` tool | `DATABASE_URL` |
-| `get_live_availability` tool | None (outbound HTTPS access to `fantasy.premierleague.com`) |
+| `query_historical_stats` tool | `DATABASE_URL` (when unset the tool is simply not offered) |
+| Live tools (`get_current_gameweek`, `get_fixtures`, `search_players`, `get_manager_squad`, `get_live_availability`) | None (outbound HTTPS access to `fantasy.premierleague.com`) |
 | `ingest_match_data` job | `DATABASE_ETL_URL` (or `DATABASE_URL`) |
 
 Run `fpl-context-mcp --check` any time to confirm all of the above are set correctly and reachable — see [Verifying connectivity](#verifying-connectivity---check).
@@ -253,7 +274,20 @@ Whichever option you pick, re-run `fpl-context-mcp --check` afterward to confirm
 
 Add the server to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows).
 
-### If installed from PyPI (recommended)
+### Zero setup, live tools only (no database)
+
+```json
+{
+  "mcpServers": {
+    "fpl-context": {
+      "command": "uvx",
+      "args": ["fpl-context-mcp"]
+    }
+  }
+}
+```
+
+### If installed from PyPI, with the history database
 
 ```json
 {
@@ -296,7 +330,7 @@ Restart Claude Desktop. You should see `fpl-context` appear in the tools panel. 
 
 ## Other AI clients (local)
 
-Any client that can launch a local MCP server (stdio) works the same way: run the `fpl-context-mcp` command with `DATABASE_URL` in its environment. Swap in your own values below.
+Any client that can launch a local MCP server (stdio) works the same way: run the `fpl-context-mcp` command (add `DATABASE_URL` to its environment only if you want the SQL history tool). Swap in your own values below.
 
 **Claude Code**
 
@@ -462,6 +496,48 @@ Executes a read-only SQL `SELECT` against the historical stats database.
 **Safety**
 
 The tool enforces two layers of protection: a keyword blocklist rejects `INSERT`, `UPDATE`, `DELETE`, `DROP`, and similar statements before any database call is made, and the database connection uses a read-only role with no write grants.
+
+### Live tools overview
+
+These five tools call the public FPL API directly and need no database or configuration. They share one cache: FPL's `bootstrap-static` data (every player and team) is downloaded once and reused for 5 minutes across tools, a manager's picks for 2 minutes. If FPL can't be reached, the last cached copy is served and labelled as possibly out of date. All are read-only and advertise `readOnlyHint`, so clients can skip approval prompts. Team arguments accept a full name, a short name or a unique fragment (`Arsenal`, `MCI`, `Man City`).
+
+### `get_current_gameweek`
+
+No parameters. Returns the current gameweek (in progress or finished), the next gameweek, and the next transfer deadline with the time left. *"When is the next deadline?"*
+
+### `get_fixtures`
+
+Fixtures with FPL's difficulty rating (FDR): 1 easiest, 5 hardest, from each team's own point of view.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `team` | string | Optional. Show that team's fixtures (opponent, home/away, its own FDR). Omit for all teams. |
+| `gameweek` | integer 1-38 | Optional. A single gameweek (includes scores once played). |
+| `gameweeks_ahead` | integer 1-38 | Optional. Gameweeks to list from the next one to play (default 5). Ignored when `gameweek` is set. |
+
+*"Arsenal's next six fixtures?"*, *"What are the fixtures in gameweek 12?"*
+
+### `search_players`
+
+| Parameter | Type | Description |
+|---|---|---|
+| `name` | string | Part of a first, second or web name. |
+| `team` | string | Team name or short name. |
+| `position` | `GKP` / `DEF` / `MID` / `FWD` | Optional. |
+| `max_price` | number | Maximum price in £m, e.g. `7.5`. |
+| `sort_by` | string | `total_points` (default), `form`, `price`, `selected_by_percent`, `ep_next`, `points_per_game`, `goals_scored`, `assists`, `clean_sheets`, `minutes`, `transfers_in_event`. Highest first. |
+| `limit` | integer | Rows to return (default 15, max 50). |
+
+Each row has price, total points, form, ownership, FPL's expected points for the next gameweek (`ep_next`) and availability status. *"Best midfielders under £8m by form?"*
+
+### `get_manager_squad`
+
+| Parameter | Type | Description |
+|---|---|---|
+| `team_id` | integer | The manager's FPL team ID: the number in the URL of their FPL Points page (`fantasy.premierleague.com/entry/<id>/event/<gw>`). |
+| `gameweek` | integer 1-38 | Optional. Defaults to the manager's current gameweek. |
+
+Returns the 15-man squad with captain and vice-captain, bench, bank, squad value, transfers and any hit taken, the chip played that week, and every chip used so far this season. It reads only the public data FPL already shows anyone with the team ID; no login. *"What chips has team 123456 used?"*
 
 ### `get_live_availability`
 
