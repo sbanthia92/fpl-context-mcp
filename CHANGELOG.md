@@ -21,6 +21,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     their own key and one can be revoked without rotating the rest.
   - `MCP_MAX_CONCURRENT_QUERIES` (default 4) — SQL queries beyond the cap wait up to 5
     seconds, then get a "server busy" answer instead of piling onto the database.
+- **`Dockerfile`** for running the HTTP server as a container: non-root user, health check
+  on `/health`, listens on `$MCP_PORT`, else `$PORT`, else 8000, and defaults to a 120/min
+  rate limit.
+- **`db/hosted_role.sql`**: a hardened `fpl_readonly` role for public deployments (SELECT
+  on the six tables only, connection limit, read-only transactions, server-side
+  statement/lock/idle timeouts), because on a shared endpoint the role, not the keyword
+  blocklist, is what bounds arbitrary SELECTs.
 - The SQL tool now times out connecting after 5 seconds and no longer echoes connection
   errors (hostnames) back to the caller.
 
