@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-10-21
+
+Breaking: the database is gone. The server is now purely live: it needs no database and no
+configuration. FPL serves match-by-match data for the current season only (past seasons are
+season totals), so the optional PostgreSQL copy added little the live API doesn't already give.
+
+### Added
+
+- **`get_player_history`** — a player's matches this season (minutes, goals, assists, clean
+  sheets, bonus, xG/xA, points), optionally only against one opponent or the last N matches,
+  plus season totals for every past season FPL has on record. States clearly that earlier-season
+  opponent splits are not available from FPL.
+- **`get_gameweek_stats`** — every player's stats for one gameweek, ranked, filterable by
+  position and team. Labels a gameweek still in progress.
+- `fpl_client.find_player` — player-name lookup that lists candidates instead of guessing when a
+  name is ambiguous.
+- `--check` now confirms the FPL API is reachable.
+
+### Removed
+
+- **`query_historical_stats`** (the SQL tool), `DATABASE_URL`, `DATABASE_ETL_URL`, `DRY_RUN` and
+  `MCP_MAX_CONCURRENT_QUERIES`.
+- The `fpl-context-ingest-match` and `fpl-context-backfill-history` commands and the `jobs/`
+  package, `db/schema.sql`, `db/hosted_role.sql`, the ingest/backfill GitHub workflows, the
+  `fpl://schema` resource, and the `asyncpg` / `psycopg2-binary` dependencies (a lighter install).
+- The canary's database-freshness check (it now checks the endpoint answers and returns player data).
+
+### Changed
+
+- Prompts, the glossary resource, README, `docs/hosting.md` and `CLAUDE.md` describe the
+  live-only server. A hosted deployment needs no database.
+
+### Migrating
+
+If you rely on the SQL tool or the ingestion jobs, pin `fpl-context-mcp<0.11`. Everything else
+works unchanged; remove `DATABASE_URL` from your client config (it is ignored).
+
 ## [0.10.1] — 2026-10-21
 
 ### Fixed

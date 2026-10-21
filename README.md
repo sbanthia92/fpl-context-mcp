@@ -2,9 +2,7 @@
 
 <!-- mcp-name: io.github.sbanthia92/fpl-context-mcp -->
 
-An [MCP](https://modelcontextprotocol.io) server that gives any MCP-capable AI agent Fantasy Premier League (FPL) data. **It works with zero setup**: install and run it, and your assistant can read the current gameweek, fixtures with difficulty ratings, player stats, any manager's squad and chips, and live injury and suspension flags, all straight from the public FPL API. Optionally, point it at your own PostgreSQL database to also query historical stats with SQL. It runs locally in Claude Desktop, Claude Code, Cursor, VS Code Copilot, Windsurf, Gemini CLI and Codex; ChatGPT and other clients that only accept a URL can connect when you [host it over HTTP](#remote-access-over-http-chatgpt-and-other-url-only-clients).
-
-**Live tools: no database, no configuration**
+An [MCP](https://modelcontextprotocol.io) server that gives any MCP-capable AI agent live Fantasy Premier League (FPL) data: the current gameweek and deadline, fixtures with difficulty ratings, player stats and match history, any manager's squad and chips, expected points, and injury and suspension flags. **It works with zero setup and needs no database**: it reads the public FPL API directly. It runs locally in Claude Desktop, Claude Code, Cursor, VS Code Copilot, Windsurf, Gemini CLI and Codex; ChatGPT and other clients that only accept a URL can connect when you [host it over HTTP](#remote-access-over-http-chatgpt-and-other-url-only-clients).
 
 | Tool | What it does |
 |---|---|
@@ -12,46 +10,30 @@ An [MCP](https://modelcontextprotocol.io) server that gives any MCP-capable AI a
 | `get_fixtures` | Fixtures with FPL's difficulty rating (FDR, 1 to 5): every team, one team's run, or a single gameweek |
 | `get_fixture_run` | How hard a team's next few fixtures are (average FDR, home/away, blank and double gameweeks), or a ranked fixture ticker for all 20 teams |
 | `search_players` | Find and rank players by name, team, position and max price; sort by points, form, price, ownership, expected points and more |
+| `get_player_history` | A player's matches this season (optionally against one opponent) and their season totals for past seasons |
+| `get_gameweek_stats` | Every player's stats for one gameweek, ranked: top scorers, clean sheets, bonus |
 | `get_xpts` | Estimated expected points for a gameweek by position, team and price, built from underlying stats, expected minutes, availability and fixture difficulty |
 | `get_manager_squad` | A manager's squad, captain, bench, bank, transfers and chips used, from their FPL team ID |
-| `get_live_availability` | Every player's current injury, suspension and availability flags, so a player flagged an hour ago shows up now |
+| `get_live_availability` | Every player's current injury, suspension and availability flags |
 
-**Optional: your own history database**
+Plus three prompts (`captain_pick`, `transfer_plan`, `chip_timing`) that show up as slash commands in clients that support them, and a reference resource (`fpl://glossary`). See [Prompts and resources](#prompts-and-resources).
 
-| Tool | What it does |
-|---|---|
-| `query_historical_stats` | Runs a read-only SQL SELECT against a PostgreSQL database of FPL player, fixture and gameweek stats (whatever seasons you've ingested). Only offered when `DATABASE_URL` is set |
-
-An ingestion job keeps that database populated and current:
-
-| Job | What it does |
-|---|---|
-| `ingest_match_data` | Fetches teams, fixtures, players (with availability) and per-match player stats from the FPL API, and writes them to PostgreSQL |
-
-> **`query_historical_stats` only reads what is already in *your* PostgreSQL database.** It starts out **empty**: you must run the ingestion job once to seed it, and then keep running it **on a recurring schedule forever**, or its answers will silently go stale. See [Keeping data fresh (ongoing)](#keeping-data-fresh-ongoing). The live tools need none of this; they always return FPL's current data.
-
-**Prompts and resources.** Clients that support MCP prompts show `captain_pick`, `transfer_plan` and `chip_timing` as slash commands (for example `/mcp__fpl-context__captain_pick` in Claude Code); each walks the model through the right tools. Two resources, `fpl://schema` (the database schema; only listed when a database is configured) and `fpl://glossary` (status codes, FDR, which tool answers what), can be attached as context. See [Prompts and resources](#prompts-and-resources).
+> **Data limits.** FPL serves match-by-match data for the **current season only**; past seasons are season totals. Questions like "how did X do against Arsenal in earlier seasons" can't be answered from FPL's data, and the tools say so rather than guess.
 
 ---
 
 ## Contents
 
 - [Quickstart](#quickstart)
-- [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Configuration](#configuration)
-- [Provisioning your database](#provisioning-your-database)
-- [Seeding data (required before first use)](#seeding-data-required-before-first-use)
-- [Keeping data fresh (ongoing)](#keeping-data-fresh-ongoing)
 - [Registering with Claude Desktop](#registering-with-claude-desktop)
 - [Other AI clients (local)](#other-ai-clients-local)
 - [Remote access over HTTP (ChatGPT and other URL-only clients)](#remote-access-over-http-chatgpt-and-other-url-only-clients)
 - [Running the server standalone](#running-the-server-standalone)
 - [Verifying connectivity (--check)](#verifying-connectivity---check)
-- [Dry-run mode](#dry-run-mode)
 - [MCP tools reference](#mcp-tools-reference)
 - [Prompts and resources](#prompts-and-resources)
-- [Database schema](#database-schema)
 - [Running tests](#running-tests)
 - [Data sources and disclaimer](#data-sources-and-disclaimer)
 - [License](#license)
@@ -60,58 +42,33 @@ An ingestion job keeps that database populated and current:
 
 ## Quickstart
 
-### Fastest path: live tools, no database
-
 ```bash
 uvx fpl-context-mcp
 ```
 
-Register it with your client ([Claude Desktop](#registering-with-claude-desktop) config: `{"mcpServers": {"fpl-context": {"command": "uvx", "args": ["fpl-context-mcp"]}}}`) and ask *"who should I captain this week?"* or *"show Arsenal's next five fixtures"*. That's it. Everything below is only needed for the optional SQL history tool.
+Register it with your client ([Claude Desktop](#registering-with-claude-desktop) config: `{"mcpServers": {"fpl-context": {"command": "uvx", "args": ["fpl-context-mcp"]}}}`) and ask *"who should I captain this week?"* or *"show Arsenal's next five fixtures"*. That's it: no database, no account, no API key.
 
-### Full path: add the history database
-
-The full path from zero to a working `query_historical_stats` tool, in order. Each step links to details further down.
-
-1. **Install**: `pip install fpl-context-mcp` — see [Installation](#installation).
-2. **Provision storage**: a PostgreSQL database. Run [`db/schema.sql`](db/schema.sql) against a fresh Postgres database — see [Provisioning your database](#provisioning-your-database).
-3. **Configure**: copy [`.env.example`](.env.example) to `.env` and fill in your `DATABASE_URL` and `DATABASE_ETL_URL` — see [Configuration](#configuration).
-4. **Verify connectivity**: `fpl-context-mcp --check` — confirms every credential works before you go further.
-5. **Seed data**: run the match ingestion command, then the one-time history backfill, so there's actually something to query — see [Seeding data](#seeding-data-required-before-first-use).
-6. **Schedule ongoing ingestion**: set up cron (or equivalent) to keep re-running the match ingestion command (not the backfill) indefinitely — see [Keeping data fresh](#keeping-data-fresh-ongoing). Skipping this is the #1 cause of "the tool returns nothing" reports.
-7. **Connect your AI client**: [Claude Desktop](#registering-with-claude-desktop), [Claude Code, Cursor, VS Code, Windsurf, Gemini CLI or Codex](#other-ai-clients-local), or — for ChatGPT and other clients that only accept a URL — [run it over HTTP](#remote-access-over-http-chatgpt-and-other-url-only-clients).
-
----
-
-## Prerequisites
-
-| Requirement | Version |
-|---|---|
-| Python | 3.11+ |
-| PostgreSQL *(optional)* | Any recent version, with a read-only role (e.g. `fpl_readonly`) and a read/write role (e.g. `fpl_etl`). Only needed for `query_historical_stats` |
-
-The live tools need only Python and outbound HTTPS to `fantasy.premierleague.com`. If you want the SQL tool, you provision the database yourself: see the next sections. Free tiers (Neon, Supabase, etc.) are plenty: the data is a few MB per season.
+For other clients see [Other AI clients](#other-ai-clients-local). For ChatGPT and other URL-only clients, [host it over HTTP](#remote-access-over-http-chatgpt-and-other-url-only-clients).
 
 ---
 
 ## Installation
 
-### From PyPI (recommended)
+Needs Python 3.11+ and outbound HTTPS access to `fantasy.premierleague.com`.
+
+### Without installing (uv)
+
+`uvx fpl-context-mcp` runs it straight from PyPI. Requires [uv](https://docs.astral.sh/uv/).
+
+### From PyPI
 
 ```bash
 pip install fpl-context-mcp
 ```
 
-This installs three CLI commands: `fpl-context-mcp` (the MCP server), `fpl-context-ingest-match` (the recurring ingestion job), and `fpl-context-backfill-history` (a one-time job for past seasons) — see [Seeding data](#seeding-data-required-before-first-use).
+This installs the `fpl-context-mcp` command.
 
-### With uv
-
-```bash
-git clone https://github.com/sbanthia92/fpl-context-mcp
-cd fpl-context-mcp
-uv sync
-```
-
-### With pip (from source)
+### From source
 
 ```bash
 git clone https://github.com/sbanthia92/fpl-context-mcp
@@ -129,151 +86,14 @@ fpl-context-mcp @ git+https://github.com/sbanthia92/fpl-context-mcp.git
 
 ## Configuration
 
-The server reads all secrets from environment variables. Copy [`.env.example`](.env.example) to `.env` in your working directory (it's gitignored) and fill in your own values:
+The server needs **no configuration** over stdio. Everything below applies only to the HTTP transport (`--transport http`), and can be set as environment variables or in a `.env` file (see [`.env.example`](.env.example)):
 
-```dotenv
-# PostgreSQL — read-only connection for the query_historical_stats tool
-DATABASE_URL=postgresql://fpl_readonly:password@localhost:5432/fpl
-
-# PostgreSQL — read/write connection for the ingest_match_data job
-# Falls back to DATABASE_URL if not set
-DATABASE_ETL_URL=postgresql://fpl_etl:password@localhost:5432/fpl
-
-# HTTP transport only (fpl-context-mcp --transport http). Requests to /mcp must
-# send "Authorization: Bearer <token>". Leave empty only when bound to localhost.
-# MCP_AUTH_TOKEN=
-```
-
-### Which variables does each component need?
-
-| Component | Variables required |
-|---|---|
-| `query_historical_stats` tool | `DATABASE_URL` (when unset the tool is simply not offered) |
-| Live tools (`get_current_gameweek`, `get_fixtures`, `get_fixture_run`, `search_players`, `get_xpts`, `get_manager_squad`, `get_live_availability`) | None (outbound HTTPS access to `fantasy.premierleague.com`) |
-| `ingest_match_data` job | `DATABASE_ETL_URL` (or `DATABASE_URL`) |
-
-Run `fpl-context-mcp --check` any time to confirm all of the above are set correctly and reachable — see [Verifying connectivity](#verifying-connectivity---check).
-
----
-
-## Provisioning your database
-
-```bash
-createdb fpl   # or whatever database name you'll use in DATABASE_URL
-psql fpl -f db/schema.sql
-```
-
-[`db/schema.sql`](db/schema.sql) creates the six tables `query_historical_stats` expects (`seasons`, `teams`, `gameweeks`, `players`, `fixtures`, `gw_player_stats`) and includes example `CREATE ROLE` statements for the read-only and read/write roles referenced in `.env.example`. It's a starting schema, not a full migration tool — adjust types/constraints as needed.
-
-Serving the database to other people? Use [`db/hosted_role.sql`](db/hosted_role.sql) instead of the example role: it limits the role to these six tables and adds a connection cap and server-side timeouts.
-
-The tables start **completely empty**. Continue to [Seeding data](#seeding-data-required-before-first-use).
-
----
-
-## Seeding data (required before first use)
-
-The ingestion jobs are plain commands you run directly — nothing runs automatically on `pip install` or on MCP server startup.
-
-```bash
-# If installed from PyPI
-fpl-context-ingest-match
-fpl-context-backfill-history   # one-time: past seasons (see below)
-
-# If running from source
-python -m jobs.ingest_match_data
-python -m jobs.backfill_history
-```
-
-Run these **once, right after configuring your `.env`**, before registering the server with Claude Desktop. Run `fpl-context-ingest-match` before the backfill. Until you do, `query_historical_stats` returns `Query returned no results.` for any query, since the tables are empty.
-
-`ingest_match_data` loads the **current season**: every team, gameweek, player and fixture, plus per-player stats for matches already played (the first run can take several minutes mid-season, since it fetches stats player by player). Later runs are quick — see [What each run updates](#what-each-run-updates).
-
-`fpl-context-backfill-history` adds **past seasons** (as far back as FPL has them, about 20). It reads FPL's per-player season history and writes one row per player per season into `players`. It's safe to re-run and only needs to run once, since past seasons don't change. **Know its limits:**
-
-- It holds **season totals only** — points, minutes, goals, assists, clean sheets, cards, bonus. FPL doesn't serve past fixtures, teams or match-by-match stats, so those tables only ever contain the current season.
-- Past-season rows have `team_fpl_id` set to NULL (FPL doesn't say which team a player was on), and `fpl_id` is the player's *current* FPL id.
-- **It only covers players in FPL's current player list.** Anyone who has left the league (or retired) has no history here, so a question about a departed player returns nothing, and league-wide or team-wide totals for a past season are incomplete. Per-player questions about current players are reliable.
-
----
-
-## Keeping data fresh (ongoing)
-
-**This is not a one-time step.** Fixtures change weekly, player stats update after every match, and injury/availability news changes daily. If you seed once and never run the job again, a query a month later will hit a database that's **missing every result, stat and injury update since your last run**.
-
-You need something to invoke `fpl-context-ingest-match` on a recurring schedule, indefinitely, for as long as the MCP server is in use. (The backfill is not part of this — run it once.) Pick whichever fits your setup:
-
-### What each run updates
-
-Runs are on a clock, not tied to gameweeks — nothing triggers when a match ends. A result shows up in your database at the first run after FPL marks the fixture finished.
-
-| Job | Each run | Freshness with the default schedule |
+| Variable | Default | Purpose |
 |---|---|---|
-| `fpl-context-ingest-match` | Rewrites all teams, gameweeks (deadlines, current/next flags), players (points, form, price, and availability: status, chance of playing, news and when it changed) and **all 380 fixtures** (scores, finished flags, reschedules). Fetches per-player match stats for newly finished fixtures, and re-fetches those from the last 2 days because FPL revises bonus points after full time. | Up to about 12 hours behind (runs at 06:00 and 22:00 UTC) |
-
-Run more often on matchdays if you want results sooner — each run takes a minute or two, and steady-state runs make very few requests to FPL.
-
-### Option A — cron (simplest, any Linux/macOS host)
-
-```cron
-# Match data: twice daily during the season (06:00 + 22:00 UTC)
-0 6,22 * * * /path/to/venv/bin/fpl-context-ingest-match >> /var/log/fpl-context-ingest-match.log 2>&1
-```
-
-Adjust the match-data cadence to the calendar:
-
-| Period | Recommended cadence |
-|---|---|
-| PL season (Aug–May) | Twice daily, `0 6,22 * * *` |
-| World Cup / tournament group stage | Hourly, `0 * * * *` |
-| World Cup / tournament knockout | Every 6 hours, `0 */6 * * *` |
-| Off-season | Once daily, `0 8 * * *` |
-
-### Option B — GitHub Actions in your own private repo (free, no server needed)
-
-Best if you don't have a machine that's always on. You don't fork this project — you create a tiny repo of your own with one file that installs the package from PyPI and runs the ingestion command on a schedule.
-
-1. Create a new **private** GitHub repository (any name).
-2. Add this file as `.github/workflows/ingest.yml`:
-
-   ```yaml
-   name: Ingest sports data
-
-   on:
-     schedule:
-       - cron: "0 6,22 * * *" # twice daily, UTC
-     workflow_dispatch: {} # lets you run it by hand from the Actions tab
-
-   jobs:
-     ingest:
-       runs-on: ubuntu-latest
-       steps:
-         - uses: actions/setup-python@v5
-           with:
-             python-version: "3.11"
-         - run: pip install fpl-context-mcp
-         - name: Ingest match data
-           run: fpl-context-ingest-match
-           env:
-             DATABASE_URL: ${{ secrets.DATABASE_URL }}
-             DATABASE_ETL_URL: ${{ secrets.DATABASE_ETL_URL }}
-   ```
-
-3. In that repo: **Settings → Secrets and variables → Actions → New repository secret**, and add `DATABASE_URL` and `DATABASE_ETL_URL`.
-4. Open the **Actions** tab, pick "Ingest sports data", and click **Run workflow** once to seed your data. From then on it runs by itself on the schedule.
-
-Notes:
-
-- **A failed run turns red** and GitHub emails you (missing credentials, a database that's unreachable, an API outage), so you'll know if data stops flowing.
-- **Updates:** `pip install fpl-context-mcp` grabs the latest release on every run, so fixes arrive automatically. Pin a version (`fpl-context-mcp==0.3.0`) if you'd rather upgrade on purpose.
-- **Cost:** each run takes about a minute or two, so a twice-daily schedule stays well inside GitHub's free monthly minutes for private repos.
-- **Why private:** GitHub automatically pauses scheduled workflows in *public* repos after 60 days without a commit. Private repos aren't paused.
-
-### Option C — any other scheduler
-
-Managed cron (Render, Railway, Fly.io machines, GCP Cloud Scheduler + Cloud Run Jobs, AWS EventBridge + Lambda/Fargate, systemd timers, Airflow, Dagster, etc.) all work the same way — point it at `fpl-context-ingest-match` (or `python -m jobs.ingest_match_data`) with the cadence table above and the environment variables from [Configuration](#configuration).
-
-Whichever option you pick, re-run `fpl-context-mcp --check` afterward to confirm the scheduled job's credentials actually work in that environment — a job that silently fails every night is worse than no job, since nothing tells you the data's gone stale.
+| `MCP_TRANSPORT` / `MCP_HOST` / `MCP_PORT` (or `PORT`) | `stdio` / `127.0.0.1` / `8000` | Defaults for `--transport` / `--host` / `--port` |
+| `MCP_AUTH_TOKEN` | (empty) | Require `Authorization: Bearer <token>` on `/mcp`. Comma-separate several keys |
+| `MCP_RATE_LIMIT_PER_MIN` | `0` (off) | Per-caller request limit on `/mcp`; see [Remote access](#remote-access-over-http-chatgpt-and-other-url-only-clients) |
+| `MCP_CLIENT_IP_HEADER` | (empty) | Header with the real client IP behind a trusted proxy |
 
 ---
 
@@ -281,7 +101,7 @@ Whichever option you pick, re-run `fpl-context-mcp --check` afterward to confirm
 
 Add the server to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows).
 
-### Zero setup, live tools only (no database)
+### With uvx (recommended)
 
 ```json
 {
@@ -294,16 +114,13 @@ Add the server to `~/Library/Application Support/Claude/claude_desktop_config.js
 }
 ```
 
-### If installed from PyPI, with the history database
+### If installed with pip
 
 ```json
 {
   "mcpServers": {
     "fpl-context": {
-      "command": "fpl-context-mcp",
-      "env": {
-        "DATABASE_URL": "postgresql://fpl_readonly:password@localhost:5432/fpl"
-      }
+      "command": "fpl-context-mcp"
     }
   }
 }
@@ -316,10 +133,7 @@ Add the server to `~/Library/Application Support/Claude/claude_desktop_config.js
   "mcpServers": {
     "fpl-context": {
       "command": "python",
-      "args": ["/absolute/path/to/fpl-context-mcp/server.py"],
-      "env": {
-        "DATABASE_URL": "postgresql://fpl_readonly:password@localhost:5432/fpl"
-      }
+      "args": ["/absolute/path/to/fpl-context-mcp/server.py"]
     }
   }
 }
@@ -331,18 +145,18 @@ Add the server to `~/Library/Application Support/Claude/claude_desktop_config.js
 > "args": ["run", "/absolute/path/to/fpl-context-mcp/server.py"]
 > ```
 
-Restart Claude Desktop. You should see `fpl-context` appear in the tools panel. If the tool returns nothing useful, re-check [Seeding data](#seeding-data-required-before-first-use) and [Keeping data fresh](#keeping-data-fresh-ongoing) before assuming the server itself is broken.
+Restart Claude Desktop. You should see `fpl-context` appear in the tools panel.
 
 ---
 
 ## Other AI clients (local)
 
-Any client that can launch a local MCP server (stdio) works the same way: run the `fpl-context-mcp` command (add `DATABASE_URL` to its environment only if you want the SQL history tool). Swap in your own values below.
+Any client that can launch a local MCP server (stdio) works the same way: run the `fpl-context-mcp` command (no configuration needed).
 
 **Claude Code**
 
 ```bash
-claude mcp add fpl-context -e DATABASE_URL=postgresql://fpl_readonly:password@localhost:5432/fpl -- fpl-context-mcp
+claude mcp add fpl-context -- uvx fpl-context-mcp
 ```
 
 **Cursor** (`~/.cursor/mcp.json`), **Windsurf** (`~/.codeium/windsurf/mcp_config.json`) and **Gemini CLI** (`~/.gemini/settings.json`) all use the same `mcpServers` shape as Claude Desktop:
@@ -351,10 +165,8 @@ claude mcp add fpl-context -e DATABASE_URL=postgresql://fpl_readonly:password@lo
 {
   "mcpServers": {
     "fpl-context": {
-      "command": "fpl-context-mcp",
-      "env": {
-        "DATABASE_URL": "postgresql://fpl_readonly:password@localhost:5432/fpl"
-      }
+      "command": "uvx",
+      "args": ["fpl-context-mcp"]
     }
   }
 }
@@ -367,10 +179,8 @@ claude mcp add fpl-context -e DATABASE_URL=postgresql://fpl_readonly:password@lo
   "servers": {
     "fpl-context": {
       "type": "stdio",
-      "command": "fpl-context-mcp",
-      "env": {
-        "DATABASE_URL": "postgresql://fpl_readonly:password@localhost:5432/fpl"
-      }
+      "command": "uvx",
+      "args": ["fpl-context-mcp"]
     }
   }
 }
@@ -380,11 +190,11 @@ claude mcp add fpl-context -e DATABASE_URL=postgresql://fpl_readonly:password@lo
 
 ```toml
 [mcp_servers.fpl-context]
-command = "fpl-context-mcp"
-env = { DATABASE_URL = "postgresql://fpl_readonly:password@localhost:5432/fpl" }
+command = "uvx"
+args = ["fpl-context-mcp"]
 ```
 
-**Without installing first** — if you have [uv](https://docs.astral.sh/uv/), use `"command": "uvx"` with `"args": ["fpl-context-mcp"]` in any of the configs above.
+**uv not installed?** `pip install fpl-context-mcp`, then use `"command": "fpl-context-mcp"` (no `args`) in any of the configs above.
 
 **Your own agent code** — the MCP SDKs (Python, TypeScript) and agent frameworks such as the OpenAI Agents SDK can launch `fpl-context-mcp` as a stdio server, or connect to it over HTTP as below.
 
@@ -420,107 +230,51 @@ and the OpenAI Agents SDK / Responses API MCP tool (`headers={"Authorization": "
 |---|---|---|
 | `MCP_RATE_LIMIT_PER_MIN` | `0` (off) | Max requests per minute to `/mcp` for each caller (their bearer token, else their IP). Over the limit gets `429` with a `Retry-After` header. One tool call is typically 2-3 requests, so leave headroom (120 is a reasonable start). `/health` is never limited. The counter is in memory, so with several replicas each enforces its own limit. |
 | `MCP_CLIENT_IP_HEADER` | (empty) | Behind a proxy, every request appears to come from the proxy. Set this to the header your proxy fills with the real client IP (`Fly-Client-IP`, `CF-Connecting-IP`, `X-Forwarded-For`). Only do this when the proxy overwrites the header; otherwise callers can fake their IP to dodge the limit. |
-| `MCP_MAX_CONCURRENT_QUERIES` | `4` | SQL queries running at once per process. Extras wait up to 5 seconds, then get a "server busy" reply instead of piling onto your database. |
 
-> **ChatGPT and claude.ai connectors only support OAuth or no authentication — not a static bearer token.** To use them you currently have to leave `MCP_AUTH_TOKEN` unset (the endpoint is then open to anyone who finds the URL) or put an OAuth-capable proxy in front. If you run it open, understand what that exposes: anyone can run read-only `SELECT`s against the database behind `DATABASE_URL` (10-second timeout, 100-row cap). Only do that with the dedicated `fpl_readonly` role on a database that holds nothing but FPL data. The server logs a warning at startup when it's bound to a non-local address without a token.
+> **ChatGPT and claude.ai connectors only support OAuth or no authentication — not a static bearer token.** To use them you currently have to leave `MCP_AUTH_TOKEN` unset (the endpoint is then open to anyone who finds the URL) or put an OAuth-capable proxy in front. If you run it open, anyone who finds the URL can use it and spend your server's FPL API traffic, so set the rate limit below. The server logs a warning at startup when it's bound to a non-local address without a token or a rate limit.
 
-**Running a public endpoint?** See the [hosting guide](docs/hosting.md): database role, container, proxy setup, auth modes, and a canary that checks the endpoint and its data freshness every 15 minutes.
+**Running a public endpoint?** See the [hosting guide](docs/hosting.md): container, proxy setup, auth modes, and a canary that checks the endpoint every 15 minutes.
 
-**Container.** A [`Dockerfile`](Dockerfile) is included: `docker build -t fpl-context-mcp .`, then run it with `DATABASE_URL` (and `MCP_AUTH_TOKEN`) set. It runs as a non-root user, listens on `$MCP_PORT` / `$PORT` / 8000, defaults to a rate limit of 120 requests a minute, and has a health check on `/health`.
+**Container.** A [`Dockerfile`](Dockerfile) is included: `docker build -t fpl-context-mcp .`, then run it (optionally with `MCP_AUTH_TOKEN` set). It runs as a non-root user, listens on `$MCP_PORT` / `$PORT` / 8000, defaults to a rate limit of 120 requests a minute, and has a health check on `/health`.
 
-**Where the data comes from.** A hosted server reads *your* database, exactly like a local one — you still need the ingestion job on a schedule ([Keeping data fresh](#keeping-data-fresh-ongoing)). And because you're now serving results to other people, see [Data sources and disclaimer](#data-sources-and-disclaimer).
+**Where the data comes from.** A hosted server calls the public FPL API on behalf of whoever connects, and caches responses in memory. There is nothing to provision or keep fresh. Because you're now serving results to other people, see [Data sources and disclaimer](#data-sources-and-disclaimer), and the [hosting guide](docs/hosting.md).
 
 ---
 
 ## Running the server standalone
 
 ```bash
-# If installed from PyPI
-fpl-context-mcp
-
-# If running from source
-python server.py
+fpl-context-mcp          # installed from PyPI
+python server.py         # from source
 ```
 
-By default the server communicates over stdio — it is designed to be launched by an MCP client, and running it directly is mainly useful for smoke-testing startup and environment variable loading. To run it as a persistent network service instead, use `--transport http` (see [Remote access over HTTP](#remote-access-over-http-chatgpt-and-other-url-only-clients)).
+By default the server communicates over stdio: it is designed to be launched by an MCP client, and running it directly is mainly useful for smoke-testing. To run it as a persistent network service, use `--transport http` (see [Remote access over HTTP](#remote-access-over-http-chatgpt-and-other-url-only-clients)).
 
 ---
 
 ## Verifying connectivity (--check)
 
-Before registering the server with a client — and any time something seems off — verify that your environment variables are correct and all backends are reachable:
-
 ```bash
-# If installed from PyPI
 fpl-context-mcp --check
-
-# If running from source
-python server.py --check
 ```
 
-Output example:
+Confirms the FPL API is reachable from your machine and exits `0` on success, `1` on failure:
 
 ```
-=== fpl-context-mcp configuration check ===
+=== fpl-context-mcp check ===
 
-✅ PostgreSQL (RO)   connected (localhost:5432/fpl)
-✅ PostgreSQL (ETL)  connected (localhost:5432/fpl)
+✅ FPL API reachable (700 players, 20 teams)
 
-✅ All required components OK
+✅ OK
 ```
-
-The command exits with code `0` if all required components pass, or `1` if any required component fails. Note that `--check` only verifies *connectivity* — it doesn't tell you whether your tables actually have data in them; for that, see [Seeding data](#seeding-data-required-before-first-use).
-
----
-
-## Dry-run mode
-
-Set `DRY_RUN=true` to fetch data and verify routing without writing anything to PostgreSQL:
-
-```bash
-DRY_RUN=true fpl-context-mcp
-DRY_RUN=true fpl-context-ingest-match
-```
-
-In dry-run mode:
-
-- **Tools** return a human-readable description of the call that *would* have been made — the SQL and database host — without opening any connection.
-- **Ingestion jobs** still call all external APIs (verifying connectivity) but skip every PostgreSQL write. Log output shows how many fixtures and players would have been written.
-- The server logs a `DRY RUN MODE` warning at startup so it is obvious from the logs.
-
-Accepted values for `DRY_RUN`: `true`, `1`, `yes` (case-insensitive). Any other value (or absent) disables dry-run.
 
 ---
 
 ## MCP tools reference
 
-### `query_historical_stats`
-
-Executes a read-only SQL `SELECT` against the historical stats database.
-
-**Parameters**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sql` | string | A `SELECT` statement. Mutations are rejected before reaching the database. `LIMIT` is injected automatically if omitted (capped at 100 rows). |
-
-**Example prompts**
-
-- *"Who are the top 10 midfielders by total points this season?"*
-- *"Which players have scored the most goals this season?"*
-- *"Show my captain candidate's goals and points over the last five seasons."* (past seasons only cover players still in the current FPL list)
-- *"When is the next gameweek deadline?"*
-- *"Which teams have the best defensive record at home this season?"*
-- *"Who is injured or doubtful for Arsenal, and what's their chance of playing?"*
-- *"Which players had new injury news in the last 3 days?"*
-
-**Safety**
-
-The tool enforces two layers of protection: a keyword blocklist rejects `INSERT`, `UPDATE`, `DELETE`, `DROP`, and similar statements before any database call is made, and the database connection uses a read-only role with no write grants.
-
 ### Live tools overview
 
-These seven tools call the public FPL API directly and need no database or configuration. They share one cache: FPL's `bootstrap-static` data (every player and team) is downloaded once and reused for 5 minutes across tools, a manager's picks for 2 minutes. If FPL can't be reached, the last cached copy is served and labelled as possibly out of date. All are read-only and advertise `readOnlyHint`, so clients can skip approval prompts. Team arguments accept a full name, a short name or a unique fragment (`Arsenal`, `MCI`, `Man City`).
+These tools call the public FPL API directly and need no database or configuration. They share one cache: FPL's `bootstrap-static` data (every player and team) is downloaded once and reused for 5 minutes across tools; a manager's picks and a player's match history are cached for 2 and 5 minutes, and a finished gameweek's stats for an hour. If FPL can't be reached, the last cached copy is served and labelled as possibly out of date. All are read-only and advertise `readOnlyHint`, so clients can skip approval prompts. Team arguments accept a full name, a short name or a unique fragment (`Arsenal`, `MCI`, `Man City`).
 
 ### `get_current_gameweek`
 
@@ -574,6 +328,30 @@ Ranks players by estimated expected points (`xPts`) next to the opponent and its
 
 **How `xPts` is computed.** A simple, transparent baseline, not a forecast model: appearance points, plus the player's season xG, xA, clean-sheet, saves and bonus rates per 90 times FPL's scoring values, scaled by expected minutes (the share of available minutes played so far), multiplied by ±10% per FDR point from a neutral 3, and discounted by availability. It extrapolates the season so far, so it is noisy in the first few gameweeks and cannot see rotation, tactics or set-piece changes. Use it to build a shortlist, then cross-check with `get_live_availability`. *"Top five midfielders under £8m by expected points?"*
 
+### `get_player_history`
+
+| Parameter | Type | Description |
+|---|---|---|
+| `player` | string | Required. First, second or full name (`Saka`, `Bukayo Saka`). If several players match, the error lists them so you can be specific. |
+| `opponent` | string | Optional. Only this season's matches against that team. |
+| `last_n` | integer 1-40 | Optional. Only the most recent N matches. |
+
+Returns this season's match-by-match record (opponent, home/away, score, minutes, goals, assists, clean sheets, bonus, xG, xA, points), totals for the matches shown, and season totals for every past season FPL has on record. *"How has Haaland done against Arsenal this season?"*, *"Show Saka's last five matches."*
+
+**What FPL does and doesn't have.** FPL serves match-by-match data for the **current season only**. Past seasons are one row of totals each. So "how did X perform against Arsenal over the last few seasons" cannot be answered, and the tool says so instead of implying the player never faced them.
+
+### `get_gameweek_stats`
+
+| Parameter | Type | Description |
+|---|---|---|
+| `gameweek` | integer 1-38 | Optional. Defaults to the latest gameweek with results. |
+| `position` | `GKP` / `DEF` / `MID` / `FWD` | Optional. |
+| `team` | string | Optional. |
+| `sort_by` | string | `total_points` (default), `goals_scored`, `assists`, `bonus`, `minutes`, `expected_goals`, `expected_assists`. Highest first. |
+| `limit` | integer | Rows to return (default 15, max 50). |
+
+Every player with minutes in that gameweek, ranked. A gameweek still in progress is labelled, since points and bonus can still change. *"Top scorers last gameweek?"*, *"Which defenders kept a clean sheet in GW9?"*
+
 ### `get_manager_squad`
 
 | Parameter | Type | Description |
@@ -585,7 +363,7 @@ Returns the 15-man squad with captain and vice-captain, bench, bank, squad value
 
 ### `get_live_availability`
 
-Current FPL injury, suspension and availability flags, fetched live from the FPL API. Use it before recommending or captaining a player, so a newly flagged player isn't missed. It needs no database and no ingestion run.
+Current FPL injury, suspension and availability flags, fetched live from the FPL API. Use it before recommending or captaining a player, so a newly flagged player isn't missed.
 
 **Parameters** (all optional)
 
@@ -605,7 +383,7 @@ With no arguments it returns every player who currently has a flag (any status o
 **How it behaves**
 
 - One request to FPL's `bootstrap-static` endpoint returns every player, and the response is cached in memory for 5 minutes, so heavy use costs FPL only a few calls an hour per server process.
-- If FPL can't be reached, the last cached copy is served and labelled as possibly out of date. With no cached copy it returns an error pointing at `query_historical_stats`, which has availability as of the last ingestion run.
+- If FPL can't be reached, the last cached copy is served and labelled as possibly out of date. With no cached copy it returns an error.
 
 ---
 
@@ -613,11 +391,11 @@ With no arguments it returns every player who currently has a flag (any status o
 
 ### Prompts
 
-Ready-made workflows. They contain instructions only, no data, so they never go stale: the tools fetch live FPL data when the prompt runs. Every argument is optional; without `team_id` the model asks for your squad or answers generally.
+Ready-made workflows. They contain instructions only, no data, so they never go stale: the tools fetch live FPL data when the prompt runs. Clients that support MCP prompts show them as slash commands (for example `/mcp__fpl-context__captain_pick` in Claude Code). Every argument is optional; without `team_id` the model asks for your squad or answers generally.
 
 | Prompt | Arguments | What it does |
 |---|---|---|
-| `captain_pick` | `team_id`, `gameweek` | Ranks candidates with `get_xpts`, checks fixtures and availability, and recommends a captain, vice-captain and a differential |
+| `captain_pick` | `team_id`, `gameweek` | Ranks candidates with `get_xpts`, checks fixtures, opponent history and availability, and recommends a captain, vice-captain and a differential |
 | `transfer_plan` | `team_id`, `free_transfers`, `gameweeks` | Finds your weakest assets, compares fixture runs and expected points for replacements within budget, and recommends one or two transfers (and whether a hit is worth it) |
 | `chip_timing` | `team_id`, `chip` (`wildcard`, `freehit`, `bboost`, `3xc`) | Looks for double and blank gameweeks and suggests when to play each chip you have left |
 
@@ -625,70 +403,17 @@ Ready-made workflows. They contain instructions only, no data, so they never go 
 
 | URI | Contents |
 |---|---|
-| `fpl://schema` | Tables and columns available to `query_historical_stats`. Only listed when `DATABASE_URL` is set. If a query fails on a missing table or column, the error points here: a documented column that is missing from your database usually means it was provisioned by an older version, so re-run `fpl-context-ingest-match` or apply the missing columns from [`db/schema.sql`](db/schema.sql). |
-| `fpl://glossary` | FPL status codes, FDR, positions, and which tool answers what |
-
----
-
-## Database schema
-
-The `query_historical_stats` tool has access to these tables (see [`db/schema.sql`](db/schema.sql) for the full DDL if provisioning standalone):
-
-```
-seasons          id, label (e.g. '2025/26'), start_year, is_current
-
-teams            season_id, fpl_id, name, short_name, strength,
-                 strength_attack_home/away, strength_defence_home/away
-
-gameweeks        season_id, gw_number (1–38), deadline_time, is_current,
-                 is_next, is_finished, average_entry_score, highest_score
-
-players          season_id, fpl_id, team_fpl_id, first_name, second_name,
-                 web_name, position (GKP/DEF/MID/FWD), now_cost, form,
-                 total_points, minutes, goals_scored, assists, clean_sheets,
-                 expected_goals, expected_assists, ict_index, selected_by_percent,
-                 status, chance_of_playing_next_round, news, news_added
-
-fixtures         season_id, fpl_id, gw_number, kickoff_time,
-                 home_team_fpl_id, away_team_fpl_id, home_score, away_score,
-                 finished, home_team_difficulty, away_team_difficulty
-
-gw_player_stats  season_id, player_fpl_id, gw_number, fixture_fpl_id,
-                 opponent_team_fpl_id, was_home, minutes, goals_scored,
-                 assists, clean_sheets, bonus, total_points,
-                 expected_goals, expected_assists, ict_index, starts
-```
-
-**Current vs past seasons:** `teams`, `gameweeks`, `fixtures` and `gw_player_stats` hold the **current season only**. `players` also holds one totals-only row per player per past season (see [Seeding data](#seeding-data-required-before-first-use) for what that covers and what it misses).
-
-**Availability:** `status` is `a` available, `d` doubtful, `i` injured, `s` suspended, `u` unavailable, `n` not in squad. `chance_of_playing_next_round` is 0–100 (NULL means no concern), `news` is FPL's one-line note, and `news_added` is when that note last changed. Databases created before 0.7.0 get the `news_added` column added automatically on the next ingestion run (if the ETL role owns the table; otherwise the job logs the one-line `ALTER TABLE` to run).
-
-**Join hint:** `teams.fpl_id = players.team_fpl_id` (current season, same `season_id`; `team_fpl_id` is NULL for past seasons).
+| `fpl://glossary` | FPL status codes, FDR, positions, the data limits, and which tool answers what |
 
 ---
 
 ## Running tests
 
 ```bash
-# Install dev dependencies if you haven't already
 pip install -e ".[dev]"
-
-# Run the full suite (all mocked — no real DB or API calls)
-pytest tests/ -v
-
-# Lint and format
+pytest tests/ -v          # all mocked: no network access needed
 ruff check . && ruff format .
 ```
-
-The test suite covers:
-
-| File | What's tested |
-|---|---|
-| `tests/test_config.py` | Env var reading, defaults, dotenv loading, dry-run flag |
-| `tests/test_tools_stats.py` | Mutation guard, row formatter, async DB path, dry-run |
-| `tests/test_ingest_match_data.py` | Fixture/gameweek/player upserts, `news_added` migration, stats selection, thread coordination, rollback, dry-run |
-| `tests/test_server_http.py` | HTTP transport: bearer-token auth, `/health`, no `/mcp` redirect, CLI/env argument parsing |
-| `tests/test_backfill_history.py` | Past-season backfill: season handling, NULL team, best-effort ALTER, exit codes |
 
 ---
 
@@ -696,13 +421,13 @@ The test suite covers:
 
 fpl-context-mcp is an independent open-source project. It is **not affiliated with, endorsed by, or sponsored by** the Premier League or Fantasy Premier League.
 
-The package ships no data. The ingestion jobs fetch it, on your machine and under your credentials, from:
+The package ships no data. It fetches it at run time, from your machine, from:
 
 | Source | Used for | Notes |
 |---|---|---|
-| Fantasy Premier League API (`fantasy.premierleague.com/api`) | Players, teams, fixtures, match stats, injury/availability news (ingested into PostgreSQL, and fetched live by `get_live_availability`) | Unofficial and undocumented; it can change or rate-limit without notice. |
+| Fantasy Premier League API (`fantasy.premierleague.com/api`) | Players, teams, fixtures, match stats, manager squads, injury/availability news | Unofficial and undocumented; it can change or rate-limit without notice. Responses are cached in memory for a few minutes to keep traffic low. |
 
-**You are responsible for complying with each source's terms of use** for the data you ingest, store, and — if you [host the server](#remote-access-over-http-chatgpt-and-other-url-only-clients) for other people — serve. This is especially relevant for commercial use and for public deployments. The MIT license below covers this project's code only, not any third-party content it retrieves.
+**You are responsible for complying with the source's terms of use** for the data you retrieve and, if you [host the server](#remote-access-over-http-chatgpt-and-other-url-only-clients) for other people, serve. This is especially relevant for commercial use and for public deployments. The MIT license below covers this project's code only, not any third-party content it retrieves.
 
 ---
 

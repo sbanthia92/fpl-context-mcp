@@ -2,7 +2,7 @@
 MCP tool: get_current_gameweek
 
 Which FPL gameweek is live or next, and when its transfer deadline falls. Reads FPL's
-bootstrap-static (shared, cached). Needs no database.
+bootstrap-static (shared, cached).
 """
 
 import logging

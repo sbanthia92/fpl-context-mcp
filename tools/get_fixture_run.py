@@ -3,7 +3,7 @@ MCP tool: get_fixture_run
 
 How easy or hard a team's next few fixtures are, summarised: average FDR, home/away
 split, blanks and doubles. With no team it ranks every team (a fixture ticker), easiest
-run first. Live FPL data; needs no database.
+run first. Live FPL data.
 """
 
 import logging

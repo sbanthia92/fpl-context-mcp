@@ -1,7 +1,7 @@
 # Container image for running fpl-context-mcp as a hosted streamable-HTTP server.
 #
 #   docker build -t fpl-context-mcp .
-#   docker run -p 8000:8000 -e DATABASE_URL=... -e MCP_AUTH_TOKEN=... fpl-context-mcp
+#   docker run -p 8000:8000 -e MCP_AUTH_TOKEN=... fpl-context-mcp
 #
 # See docs/hosting.md.
 FROM python:3.12-slim
@@ -15,7 +15,6 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE config.py server.py ./
 COPY tools ./tools
-COPY jobs ./jobs
 RUN pip install .
 
 # Run as an unprivileged user.

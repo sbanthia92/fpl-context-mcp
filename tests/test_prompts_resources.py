@@ -1,14 +1,10 @@
-"""Tests for MCP prompts and resources, and the schema-drift hint in the SQL tool."""
+"""Tests for MCP prompts and resources."""
 
-from unittest.mock import AsyncMock, patch
-
-import asyncpg
 import pytest
 
 import server
-from tools import query_historical_stats as qhs
 from tools.prompts import get_prompt, list_prompts
-from tools.resources import GLOSSARY_URI, SCHEMA_URI, read_resource
+from tools.resources import GLOSSARY_URI, read_resource
 
 
 def _text(result) -> str:
@@ -54,8 +50,9 @@ def test_prompt_rejects_bad_input():
 
 
 def test_resources_return_text():
-    assert "gw_player_stats" in read_resource(SCHEMA_URI)
-    assert "FDR" in read_resource(GLOSSARY_URI)
+    glossary = read_resource(GLOSSARY_URI)
+    assert "FDR" in glossary and "get_player_history" in glossary
+    assert "query_historical_stats" not in glossary
     with pytest.raises(ValueError):
         read_resource("fpl://nope")
 
@@ -65,29 +62,6 @@ async def test_server_exposes_prompts_and_resources():
     result = await server.get_prompt("captain_pick", {"team_id": "1"})
     assert "get_manager_squad" in _text(result)
     uris = {str(r.uri) for r in await server.list_resources()}
-    assert uris == {SCHEMA_URI, GLOSSARY_URI}
-    contents = await server.read_resource(SCHEMA_URI)
-    assert "gw_player_stats" in contents[0].content
-
-
-async def test_schema_resource_hidden_without_database(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    uris = {str(r.uri) for r in await server.list_resources()}
     assert uris == {GLOSSARY_URI}
-
-
-async def test_missing_column_error_points_at_schema_resource():
-    conn = AsyncMock()
-    conn.fetch.side_effect = asyncpg.UndefinedColumnError('column "news_added" does not exist')
-    with patch.object(qhs.asyncpg, "connect", AsyncMock(return_value=conn)):
-        out = await qhs.query_historical_stats("SELECT news_added FROM players")
-    assert out.startswith("Database error:")
-    assert "fpl://schema" in out and "fpl-context-ingest-match" in out
-
-
-async def test_other_database_errors_have_no_hint():
-    conn = AsyncMock()
-    conn.fetch.side_effect = asyncpg.PostgresSyntaxError("syntax error")
-    with patch.object(qhs.asyncpg, "connect", AsyncMock(return_value=conn)):
-        out = await qhs.query_historical_stats("SELECT FROM")
-    assert "fpl://schema" not in out
+    contents = await server.read_resource(GLOSSARY_URI)
+    assert "FDR" in contents[0].content

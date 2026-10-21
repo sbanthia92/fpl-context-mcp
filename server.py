@@ -1,24 +1,21 @@
 """
 fpl-context-mcp — MCP server entry point.
 
-Exposes these tools over MCP, via stdio (default) or streamable HTTP:
+Exposes these tools over MCP, via stdio (default) or streamable HTTP. All of them call the
+public FPL API directly, so ``uvx fpl-context-mcp`` works with zero setup and no database:
 
-  query_historical_stats   — read-only SQL against the FPL PostgreSQL database
-                             (stats, fixtures, and player injury/availability);
-                             listed only when DATABASE_URL is set
-  get_live_availability    — current injury/suspension flags fetched live from FPL
-  get_current_gameweek     — live current/next gameweek and deadline
-  get_fixtures             — live fixtures with difficulty ratings (FDR)
-  search_players           — live player search and ranking
-  get_manager_squad        — a manager's squad and chips by FPL team ID
+  get_current_gameweek     — current/next gameweek and deadline
+  get_fixtures             — fixtures with difficulty ratings (FDR)
   get_fixture_run          — upcoming fixture difficulty, one team or a ranked ticker
+  search_players           — player search and ranking
+  get_player_history       — a player's matches this season (vs an opponent) and past totals
+  get_gameweek_stats       — every player's stats for one gameweek
   get_xpts                 — estimated expected points for a gameweek
+  get_manager_squad        — a manager's squad and chips by FPL team ID
+  get_live_availability    — current injury/suspension flags
 
 Also exposes MCP prompts (captain_pick, transfer_plan, chip_timing: slash commands in
-many clients) and resources (fpl://schema, fpl://glossary).
-
-All tools except query_historical_stats call the public FPL API directly and need no
-database, so ``uvx fpl-context-mcp`` works with zero setup.
+many clients) and a resource (fpl://glossary).
 
 Run locally:
     cd fpl-context-mcp
@@ -47,20 +44,19 @@ from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.stdio import stdio_server
 
 from config import cfg
+from tools import fpl_client
 from tools.get_current_gameweek import get_current_gameweek
 from tools.get_fixture_run import get_fixture_run
 from tools.get_fixtures import get_fixtures
+from tools.get_gameweek_stats import SORT_FIELDS as GW_SORT_FIELDS
+from tools.get_gameweek_stats import get_gameweek_stats
 from tools.get_live_availability import get_live_availability
 from tools.get_manager_squad import get_manager_squad
+from tools.get_player_history import get_player_history
 from tools.get_xpts import get_xpts
 from tools.prompts import get_prompt as render_prompt
 from tools.prompts import list_prompts as _list_prompts
-from tools.query_historical_stats import (
-    SCHEMA_DESCRIPTION,
-    query_historical_stats,
-)
 from tools.ratelimit import RateLimiter
-from tools.resources import SCHEMA_URI
 from tools.resources import list_resources as _list_resources
 from tools.resources import read_resource as _read_resource
 from tools.search_players import SORT_FIELDS, search_players
@@ -74,55 +70,33 @@ log = logging.getLogger(__name__)
 
 def check_config() -> None:
     """
-    Validate configuration and test connectivity for each configured component.
+    Check that the FPL API is reachable and print a short summary.
 
-    Prints a human-readable summary of what is and isn't set up correctly.
-    Exits with code 1 if any required component fails its connectivity check.
+    The server needs no configuration; this only confirms outbound access to
+    fantasy.premierleague.com. Exits with code 1 if the check fails.
     """
-    import asyncio
+    import requests
 
+    lines = ["\n=== fpl-context-mcp check ===\n"]
     ok = True
-    lines = ["\n=== fpl-context-mcp configuration check ===\n"]
-
-    # --- PostgreSQL (read-only) ---
-    if not cfg.database_url:
-        lines.append("⚠️  DATABASE_URL      not set (query_historical_stats will be unavailable)")
-    else:
-        try:
-            import asyncpg
-
-            async def _ping() -> None:
-                conn = await asyncpg.connect(cfg.database_url)
-                await conn.fetchval("SELECT 1")
-                await conn.close()
-
-            asyncio.run(_ping())
-            lines.append(f"✅ PostgreSQL (RO)   connected ({cfg.database_url.split('@')[-1]})")
-        except Exception as exc:
-            lines.append(f"❌ PostgreSQL (RO)   connection failed: {exc}")
-            ok = False
-
-    # --- PostgreSQL (ETL / read-write) ---
-    if not cfg.database_etl_url:
-        lines.append("⚠️  DATABASE_ETL_URL  not set (ingest_match_data will be unavailable)")
-    else:
-        try:
-            import psycopg2
-
-            conn = psycopg2.connect(cfg.database_etl_url, connect_timeout=5)
-            conn.close()
-            url_display = cfg.database_etl_url.split("@")[-1]
-            lines.append(f"✅ PostgreSQL (ETL)  connected ({url_display})")
-        except Exception as exc:
-            lines.append(f"❌ PostgreSQL (ETL)  connection failed: {exc}")
-            ok = False
-
-    # --- Dry-run flag ---
-    if cfg.dry_run:
-        lines.append("\n🔁 DRY_RUN=true — no writes will be made")
-
-    summary = "✅ All required components OK" if ok else "❌ One or more components failed"
-    lines.append(f"\n{summary}\n")
+    try:
+        resp = requests.get(
+            fpl_client.BASE_URL + "bootstrap-static/",
+            timeout=fpl_client.TIMEOUT_SECONDS,
+            headers={"User-Agent": fpl_client.USER_AGENT},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        lines.append(
+            f"✅ FPL API reachable ({len(data.get('elements', []))} players, "
+            f"{len(data.get('teams', []))} teams)"
+        )
+    except Exception as exc:
+        lines.append(f"❌ FPL API not reachable: {exc}")
+        ok = False
+    if cfg.mcp_auth_tokens:
+        lines.append(f"🔑 HTTP auth: {len(cfg.mcp_auth_tokens)} key(s) configured")
+    lines.append(f"\n{'✅ OK' if ok else '❌ Failed'}\n")
     print("\n".join(lines))
     sys.exit(0 if ok else 1)
 
@@ -158,36 +132,6 @@ _TOOLS: dict[str, tuple[types.Tool, Callable[[dict], Awaitable[str]]]] = {}
 def _register(tool: types.Tool, handler: Callable[[dict], Awaitable[str]]) -> None:
     _TOOLS[tool.name] = (tool, handler)
 
-
-_register(
-    types.Tool(
-        name="query_historical_stats",
-        description=(
-            "Execute a read-only SQL SELECT against the FPL stats "
-            "database. Use this to answer questions about player stats, fixtures, "
-            "team strength, gameweek history, and player injury/availability status "
-            "(FPL's status, chance of playing and news note) for the seasons in the "
-            "database. Availability here is as of the last data refresh; call "
-            "get_live_availability for the current flags.\n\n" + SCHEMA_DESCRIPTION
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "sql": {
-                    "type": "string",
-                    "description": (
-                        "A SQL SELECT statement. Only SELECT is allowed — "
-                        "mutations will be rejected. LIMIT is injected automatically "
-                        "if omitted (max 100 rows)."
-                    ),
-                }
-            },
-            "required": ["sql"],
-        },
-        annotations=_ro("Query FPL stats database"),
-    ),
-    lambda a: query_historical_stats(a.get("sql", "")),
-)
 
 _register(
     types.Tool(
@@ -421,8 +365,84 @@ _register(
 )
 
 
-def _database_configured() -> bool:
-    return bool(cfg.database_url)
+_register(
+    types.Tool(
+        name="get_player_history",
+        description=(
+            "A player's match-by-match record this season (minutes, goals, assists, clean "
+            "sheets, bonus, xG/xA, points), optionally only against one opponent or the last "
+            "N matches, plus their season totals for past seasons. Live from the FPL API (no "
+            "database needed). Use it for 'how has Saka done against Spurs this season' or "
+            "'is his form real'. FPL provides match-level data for the current season only; "
+            "past seasons are totals, so opponent splits for earlier seasons do not exist."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "player": {
+                    "type": "string",
+                    "description": "Player name, e.g. 'Saka' or 'Bukayo Saka'.",
+                },
+                "opponent": {**_TEAM_PARAM, "description": "Only matches against this team."},
+                "last_n": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 40,
+                    "description": "Only the most recent N matches.",
+                },
+            },
+            "required": ["player"],
+        },
+        annotations=_ro("Player match history"),
+    ),
+    lambda a: get_player_history(
+        player=a.get("player", ""), opponent=a.get("opponent"), last_n=a.get("last_n")
+    ),
+)
+
+_register(
+    types.Tool(
+        name="get_gameweek_stats",
+        description=(
+            "Every player's stats for one gameweek, ranked (default: the latest gameweek with "
+            "results, sorted by points). Live from the FPL API (no database needed). Use it "
+            "for 'top scorers last week', 'which defenders kept clean sheets in GW9' or "
+            "'who got the most bonus'. Filter by position and team."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "gameweek": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 38,
+                    "description": "Gameweek (default: the latest with results).",
+                },
+                "position": {"type": "string", "enum": ["GKP", "DEF", "MID", "FWD"]},
+                "team": _TEAM_PARAM,
+                "sort_by": {
+                    "type": "string",
+                    "enum": list(GW_SORT_FIELDS),
+                    "description": "Stat to rank by, highest first (default total_points).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "description": "Rows to return (default 15).",
+                },
+            },
+        },
+        annotations=_ro("Gameweek stats ranking"),
+    ),
+    lambda a: get_gameweek_stats(
+        gameweek=a.get("gameweek"),
+        position=a.get("position"),
+        team=a.get("team"),
+        sort_by=a.get("sort_by") or "total_points",
+        limit=a.get("limit"),
+    ),
+)
 
 
 @server.list_tools()
@@ -431,19 +451,13 @@ async def list_tools() -> list[types.Tool]:
     Advertise the MCP tools this server exposes.
 
     Called by the MCP client (e.g. Claude Desktop) during initialisation to
-    discover what capabilities are available. ``query_historical_stats`` is only
-    listed when DATABASE_URL is set, so a database-free install never shows the
-    model a tool that can only fail.
+    discover what capabilities are available.
 
     Returns:
         List of Tool descriptors with names, descriptions, and JSON Schema for
         their input parameters.
     """
-    return [
-        tool
-        for name, (tool, _) in _TOOLS.items()
-        if name != "query_historical_stats" or _database_configured()
-    ]
+    return [tool for tool, _ in _TOOLS.values()]
 
 
 @server.call_tool()
@@ -486,8 +500,8 @@ async def get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPr
 
 @server.list_resources()
 async def list_resources() -> list[types.Resource]:
-    """Reference material: an FPL glossary, and the database schema when a database is set."""
-    return [r for r in _list_resources() if str(r.uri) != SCHEMA_URI or _database_configured()]
+    """Reference material: an FPL glossary and tool guide."""
+    return _list_resources()
 
 
 @server.read_resource()
@@ -495,17 +509,8 @@ async def read_resource(uri) -> list[ReadResourceContents]:
     return [ReadResourceContents(content=_read_resource(str(uri)), mime_type="text/plain")]
 
 
-def _warn_if_dry_run() -> None:
-    if cfg.dry_run:
-        log.warning(
-            "DRY RUN MODE — tools will return what they would do without side effects. "
-            "Set DRY_RUN=false to disable."
-        )
-
-
 async def _serve() -> None:
     """Wire the MCP server to stdio and run until the client disconnects."""
-    _warn_if_dry_run()
     async with stdio_server() as (read_stream, write_stream):
         log.info("fpl-context-mcp server started (stdio transport)")
         await server.run(
@@ -601,13 +606,12 @@ def _serve_http(host: str, port: int) -> None:
     """Run the MCP server over streamable HTTP at http://host:port/mcp."""
     import uvicorn
 
-    _warn_if_dry_run()
     token = cfg.mcp_auth_token
     rate_limit = cfg.rate_limit_per_minute
     if not token and host not in _LOOPBACK_HOSTS:
         log.warning(
             "MCP_AUTH_TOKEN is not set and the server is bound to %s — anyone who can "
-            "reach this address can query your database. Set "
+            "reach this address can use it (and spend your FPL API quota). Set "
             "MCP_AUTH_TOKEN, or put the server behind an authenticating proxy.",
             host,
         )
@@ -627,12 +631,12 @@ def _parse_args(argv: list[str]):
 
     parser = argparse.ArgumentParser(
         prog="fpl-context-mcp",
-        description="FPL stats and player-availability MCP server.",
+        description="Live Fantasy Premier League data for AI agents.",
     )
     parser.add_argument(
         "--check",
         action="store_true",
-        help="validate configuration and test connectivity, then exit",
+        help="check that the FPL API is reachable, then exit",
     )
     parser.add_argument(
         "--transport",

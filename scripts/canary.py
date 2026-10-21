@@ -4,8 +4,7 @@ Canary for a hosted fpl-context-mcp endpoint.
 Connects over streamable HTTP and checks that the server:
   1. initialises and lists tools,
   2. answers a live tool (get_current_gameweek), and
-  3. if the SQL tool is offered, holds data no more than one finished gameweek behind FPL
-     (a stalled ingestion job otherwise goes unnoticed).
+  3. returns real player data from the FPL API (search_players).
 
 Usage:
     python scripts/canary.py https://mcp.example.com/mcp [--token KEY]
@@ -19,34 +18,7 @@ import asyncio
 import os
 import sys
 
-import requests
-
-FPL_BOOTSTRAP = "https://fantasy.premierleague.com/api/bootstrap-static/"
-MAX_GAMEWEEKS_BEHIND = 1
 TIMEOUT_SECONDS = 30
-
-
-def first_value(table: str) -> str | None:
-    """First data cell of a plain-text table as returned by the SQL tool."""
-    lines = table.strip().splitlines()
-    if len(lines) < 3:
-        return None
-    return lines[2].split(" | ")[0].strip()
-
-
-def data_is_stale(db_gw: int | None, live_finished_gw: int) -> bool:
-    """True when the database is more than MAX_GAMEWEEKS_BEHIND gameweeks behind FPL."""
-    if live_finished_gw == 0:  # season not started: nothing to be behind on
-        return False
-    return (db_gw or 0) < live_finished_gw - MAX_GAMEWEEKS_BEHIND
-
-
-def live_finished_gameweek() -> int:
-    resp = requests.get(
-        FPL_BOOTSTRAP, timeout=TIMEOUT_SECONDS, headers={"User-Agent": "fpl-context-mcp-canary"}
-    )
-    resp.raise_for_status()
-    return max((e["id"] for e in resp.json()["events"] if e.get("finished")), default=0)
 
 
 def describe(exc: BaseException) -> str:
@@ -55,6 +27,12 @@ def describe(exc: BaseException) -> str:
     if subs:
         return "; ".join(describe(e) for e in subs)
     return f"{type(exc).__name__}: {exc}"
+
+
+def looks_like_players(text: str) -> bool:
+    """True when a search_players answer is a table with at least one data row."""
+    lines = text.strip().splitlines()
+    return len(lines) >= 3 and lines[0].startswith("player |")
 
 
 async def run(url: str, token: str = "") -> list[str]:
@@ -81,23 +59,10 @@ async def run(url: str, token: str = "") -> list[str]:
                     if res.isError or text.startswith("Error"):
                         failures.append(f"get_current_gameweek failed: {text[:200]}")
 
-                if "query_historical_stats" in tools:
-                    res = await session.call_tool(
-                        "query_historical_stats",
-                        {"sql": "SELECT max(gw_number) AS gw FROM gw_player_stats"},
-                    )
-                    text = res.content[0].text if res.content else ""
-                    value = first_value(text)
-                    if res.isError or value is None:
-                        failures.append(f"SQL tool failed: {text[:200]}")
-                    else:
-                        db_gw = int(value) if value.isdigit() else None
-                        live_gw = live_finished_gameweek()
-                        if data_is_stale(db_gw, live_gw):
-                            failures.append(
-                                f"database is stale: latest gameweek with stats is {db_gw}, "
-                                f"FPL has finished {live_gw}. Is ingestion running?"
-                            )
+                res = await session.call_tool("search_players", {"limit": 3})
+                text = res.content[0].text if res.content else ""
+                if res.isError or not looks_like_players(text):
+                    failures.append(f"search_players returned no player data: {text[:200]}")
     except Exception as exc:  # connection refused, 401/429, timeouts, protocol errors
         failures.append(f"could not talk to {url}: {describe(exc)}")
     return failures
