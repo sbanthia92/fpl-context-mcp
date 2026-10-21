@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-10-21
+
+### Fixed
+
+- `server.json` description was 111 characters; the MCP Registry rejects descriptions over
+  100, so the v0.10.0 registry publish failed (PyPI and the GitHub Release succeeded). The
+  description is shortened and a test now enforces the limit.
+
 ## [0.10.0] — 2026-10-20
 
 ### Added
