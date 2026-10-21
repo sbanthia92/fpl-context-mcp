@@ -42,6 +42,16 @@ _MAX_ROWS = 100
 # Hard limit on query execution time (milliseconds).
 _STATEMENT_TIMEOUT_MS = 10_000
 
+# A missing table/column usually means a mistyped name, or a database provisioned by an
+# older version of this package than the one now running.
+_SCHEMA_ERRORS = (asyncpg.UndefinedColumnError, asyncpg.UndefinedTableError)
+_SCHEMA_HINT = (
+    "Hint: check the column or table name against the fpl://schema resource. If it is "
+    "documented there but missing from your database, the database predates this version: "
+    "re-run fpl-context-ingest-match (it adds news_added when it can) or apply the missing "
+    "columns from db/schema.sql."
+)
+
 # Database schema description injected into the tool description so the model
 # knows what tables and columns are available without needing a separate schema
 # lookup call.
@@ -184,6 +194,8 @@ async def query_historical_stats(sql: str) -> str:
         rows = await conn.fetch(normalized)
     except asyncpg.PostgresError as exc:
         log.error("PostgreSQL query failed: %s | sql=%r", exc, sql, exc_info=True)
+        if isinstance(exc, _SCHEMA_ERRORS):
+            return f"Database error: {exc}\n\n{_SCHEMA_HINT}"
         return f"Database error: {exc}"
     except Exception as exc:
         log.error("Unexpected error running query: %s", exc, exc_info=True)

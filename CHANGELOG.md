@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-20
+
+### Added
+
+- **Zero-setup live mode.** Four new tools call the public FPL API directly, so
+  `uvx fpl-context-mcp` works in Claude Desktop with no database and no ingestion:
+  - `get_current_gameweek` — current and next gameweek and the transfer deadline.
+  - `get_fixtures` — fixtures with FPL's difficulty rating (FDR), for all teams, one team
+    (from its own point of view) or one gameweek.
+  - `search_players` — find and rank players by name, team, position and max price, sorted
+    by points, form, price, ownership, `ep_next` and more.
+  - `get_manager_squad` — a manager's squad, captain, bench, bank, transfers and the chips
+    they've used, by FPL team ID.
+- `tools/fpl_client.py`: one shared, cached FPL client (per-path TTL cache, stale fallback
+  when FPL is unreachable, bounded size). All live tools share a single `bootstrap-static`
+  download. `get_live_availability` now uses it too.
+- Every tool is annotated `readOnlyHint`, so clients can skip approval prompts.
+
+- **Typed tools for the questions people actually ask**, so the model doesn't have to
+  write SQL:
+  - `get_fixture_run` — average FDR, home/away split and blank/double gameweeks for a
+    team's next N gameweeks; with no team, ranks all 20 teams (a fixture ticker).
+  - `get_xpts` — estimated expected points for a gameweek by position / team / price. A
+    transparent baseline built from season xG, xA, clean-sheet, save and bonus rates,
+    expected minutes, availability and fixture difficulty, shown beside FPL's own
+    `ep_next`. Deliberately simple and noisy early in a season; documented as such.
+
+- **MCP prompts**: `captain_pick`, `transfer_plan` and `chip_timing` appear as slash
+  commands in clients that support prompts. Each tells the model which tools to call, in
+  what order, and how to present the answer; all arguments (`team_id`, `gameweek`,
+  `free_transfers`, `gameweeks`, `chip`) are optional.
+- **MCP resources**: `fpl://schema` (the database schema, listed only when `DATABASE_URL`
+  is set) and `fpl://glossary` (status codes, FDR, positions and a which-tool-answers-what
+  guide).
+- Schema drift hint: when `query_historical_stats` hits a missing table or column, the error
+  now points at `fpl://schema` and at re-running `fpl-context-ingest-match` / applying
+  `db/schema.sql`, instead of leaving the model with a bare Postgres error.
+
+### Changed
+
+- `query_historical_stats` is only listed when `DATABASE_URL` is set, so a database-free
+  install never shows the model a tool that can only fail.
+- `DATABASE_URL` is no longer a required variable in the MCP Registry metadata.
+
 ## [0.8.0] — 2026-10-08
 
 ### Added
