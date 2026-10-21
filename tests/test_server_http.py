@@ -91,3 +91,55 @@ def test_parse_args_flags_override_env(monkeypatch):
     monkeypatch.setenv("MCP_PORT", "9000")
     args = server._parse_args(["--transport", "http", "--port", "1234", "--check"])
     assert (args.transport, args.port, args.check) == ("http", 1234, True)
+
+
+def test_multiple_tokens_each_accepted():
+    """MCP_AUTH_TOKEN may list several keys; each works, others don't."""
+    app = server.build_http_app("alpha, beta")
+    with TestClient(app) as client:
+        for token, status in (("alpha", 200), ("beta", 200), ("gamma", 401)):
+            headers = {**MCP_HEADERS, "Authorization": f"Bearer {token}"}
+            assert client.post("/mcp", json=INITIALIZE, headers=headers).status_code == status
+
+
+def test_rate_limit_returns_429_with_retry_after():
+    app = server.build_http_app("", rate_limit=2)
+    with TestClient(app) as client:
+        codes = [
+            client.post("/mcp", json=INITIALIZE, headers=MCP_HEADERS).status_code for _ in range(3)
+        ]
+        limited = client.post("/mcp", json=INITIALIZE, headers=MCP_HEADERS)
+        health = client.get("/health")
+    assert codes == [200, 200, 429]
+    assert int(limited.headers["Retry-After"]) >= 1
+    assert health.status_code == 200  # health checks are never limited
+
+
+def test_rate_limit_is_per_token():
+    app = server.build_http_app("a,b", rate_limit=1)
+    with TestClient(app) as client:
+
+        def call(token):
+            headers = {**MCP_HEADERS, "Authorization": f"Bearer {token}"}
+            return client.post("/mcp", json=INITIALIZE, headers=headers).status_code
+
+        assert [call("a"), call("a"), call("b")] == [200, 429, 200]
+
+
+def test_rate_limit_uses_client_ip_header_behind_proxy():
+    app = server.build_http_app("", rate_limit=1, client_ip_header="Fly-Client-IP")
+    with TestClient(app) as client:
+
+        def call(ip):
+            headers = {**MCP_HEADERS, "Fly-Client-IP": ip}
+            return client.post("/mcp", json=INITIALIZE, headers=headers).status_code
+
+        assert [call("1.1.1.1"), call("1.1.1.1"), call("2.2.2.2")] == [200, 429, 200]
+
+
+def test_unauthenticated_requests_do_not_consume_a_valid_callers_budget():
+    app = server.build_http_app("secret", rate_limit=1)
+    with TestClient(app) as client:
+        client.post("/mcp", json=INITIALIZE, headers=MCP_HEADERS)  # 401, not counted
+        headers = {**MCP_HEADERS, "Authorization": "Bearer secret"}
+        assert client.post("/mcp", json=INITIALIZE, headers=headers).status_code == 200

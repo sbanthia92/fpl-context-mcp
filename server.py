@@ -59,6 +59,7 @@ from tools.query_historical_stats import (
     SCHEMA_DESCRIPTION,
     query_historical_stats,
 )
+from tools.ratelimit import RateLimiter
 from tools.resources import SCHEMA_URI
 from tools.resources import list_resources as _list_resources
 from tools.resources import read_resource as _read_resource
@@ -517,7 +518,7 @@ async def _serve() -> None:
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
-def build_http_app(auth_token: str = ""):
+def build_http_app(auth_token: str = "", rate_limit: int = 0, client_ip_header: str = ""):
     """
     Build the ASGI app for the streamable HTTP transport.
 
@@ -527,7 +528,11 @@ def build_http_app(auth_token: str = ""):
         /health  — unauthenticated liveness probe for hosting platforms
 
     Args:
-        auth_token: When non-empty, /mcp requires ``Authorization: Bearer <token>``.
+        auth_token:       When non-empty, /mcp requires ``Authorization: Bearer <token>``.
+                          May hold several comma-separated tokens.
+        rate_limit:       Max /mcp requests per minute per caller (0 = unlimited).
+                          Callers are keyed by bearer token, else client IP.
+        client_ip_header: Header carrying the real client IP behind a trusted proxy.
     """
     import contextlib
     import hmac
@@ -538,19 +543,41 @@ def build_http_app(auth_token: str = ""):
     from starlette.routing import Route
 
     session_manager = StreamableHTTPSessionManager(app=server, stateless=True)
-    expected = f"Bearer {auth_token}".encode()
+    expected = [f"Bearer {t.strip()}".encode() for t in auth_token.split(",") if t.strip()]
+    limiter = RateLimiter(rate_limit)
+    ip_header = client_ip_header.lower().encode()
+
+    def _caller_key(scope, headers) -> str:
+        given = headers.get(b"authorization", b"")
+        if expected and given:
+            return "token:" + given.decode("latin-1")
+        if ip_header and headers.get(ip_header):
+            return "ip:" + headers[ip_header].decode("latin-1").split(",")[0].strip()
+        client = scope.get("client")
+        return "ip:" + (client[0] if client else "unknown")
 
     class _MCPEndpoint:
         # A class instance (not a function) so Starlette's Route passes the raw
         # ASGI scope through instead of wrapping it as a request handler.
         async def __call__(self, scope, receive, send) -> None:
-            if auth_token:
-                headers = dict(scope.get("headers") or [])
+            headers = dict(scope.get("headers") or [])
+            if expected:
                 given = headers.get(b"authorization", b"")
-                if not hmac.compare_digest(given, expected):
+                # Check every token (no early exit) so timing doesn't reveal which matched.
+                matched = [hmac.compare_digest(given, e) for e in expected]
+                if not any(matched):
                     response = JSONResponse({"error": "unauthorized"}, status_code=401)
                     await response(scope, receive, send)
                     return
+            retry_after = limiter.check(_caller_key(scope, headers))
+            if retry_after:
+                response = JSONResponse(
+                    {"error": "rate limit exceeded"},
+                    status_code=429,
+                    headers={"Retry-After": str(int(retry_after) + 1)},
+                )
+                await response(scope, receive, send)
+                return
             await session_manager.handle_request(scope, receive, send)
 
     async def health(request):
@@ -576,6 +603,7 @@ def _serve_http(host: str, port: int) -> None:
 
     _warn_if_dry_run()
     token = cfg.mcp_auth_token
+    rate_limit = cfg.rate_limit_per_minute
     if not token and host not in _LOOPBACK_HOSTS:
         log.warning(
             "MCP_AUTH_TOKEN is not set and the server is bound to %s — anyone who can "
@@ -583,8 +611,14 @@ def _serve_http(host: str, port: int) -> None:
             "MCP_AUTH_TOKEN, or put the server behind an authenticating proxy.",
             host,
         )
+    if host not in _LOOPBACK_HOSTS and not rate_limit:
+        log.warning(
+            "MCP_RATE_LIMIT_PER_MIN is not set: a public endpoint has no per-caller request "
+            "limit. Set it (e.g. 120) before exposing the server."
+        )
     log.info("fpl-context-mcp server started (http transport) on http://%s:%d/mcp", host, port)
-    uvicorn.run(build_http_app(token), host=host, port=port, log_level="info")
+    app = build_http_app(token, rate_limit, cfg.client_ip_header)
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 def _parse_args(argv: list[str]):

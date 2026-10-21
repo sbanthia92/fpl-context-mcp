@@ -53,6 +53,9 @@ fpl-context-mcp/
     test_server_http.py
   db/
     schema.sql                     # Reference PostgreSQL schema for standalone provisioning
+  Dockerfile                       # Hosted HTTP server image (non-root, health check)
+  docs/hosting.md                  # Running a public endpoint: checklist, auth modes, canary
+  scripts/canary.py                # Health + data-freshness check of a hosted endpoint
   pyproject.toml
   CHANGELOG.md
   LICENSE                          # MIT
@@ -107,8 +110,11 @@ loaded automatically by `config.py` when `python-dotenv` is installed.
 |---------------------|----------|--------------|---------|
 | `DATABASE_URL`      | No (SQL tool only) | —  | Read-only PostgreSQL DSN (`fpl_readonly` user). Unset → `query_historical_stats` is not listed; the live tools still work. |
 | `DATABASE_ETL_URL`  | Yes*     | —            | Read/write PostgreSQL DSN (`fpl_etl` user). Falls back to `DATABASE_URL`. |
-| `MCP_AUTH_TOKEN`    | No       | (empty)      | HTTP transport only: require `Authorization: Bearer <token>` on `/mcp`. |
+| `MCP_AUTH_TOKEN`    | No       | (empty)      | HTTP transport only: require `Authorization: Bearer <token>` on `/mcp`. Comma-separated for several keys. |
 | `MCP_TRANSPORT` / `MCP_HOST` / `MCP_PORT` (or `PORT`) | No | `stdio` / `127.0.0.1` / `8000` | Defaults for `--transport` / `--host` / `--port`. |
+| `MCP_RATE_LIMIT_PER_MIN` | No | `0` (off) | HTTP only: requests/min per caller (token, else IP) on `/mcp`; over → 429. In-memory, per process. |
+| `MCP_CLIENT_IP_HEADER` | No | (empty) | HTTP only: header with the real client IP behind a trusted proxy. Never set unless the proxy overwrites it (spoofable otherwise). |
+| `MCP_MAX_CONCURRENT_QUERIES` | No | `4` | SQL queries running at once per process; extras wait 5 s then get "server busy". |
 
 The live tools need no configuration. Jobs need their DSN to function; the package starts
 without any of them and logs an error on first use of a DB-backed component.
