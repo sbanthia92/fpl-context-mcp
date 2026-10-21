@@ -2,7 +2,7 @@
 MCP tool: get_fixtures
 
 Fixtures with FPL's fixture difficulty rating (FDR, 1 easiest to 5 hardest) from the
-live FPL fixtures endpoint. Needs no database.
+live FPL fixtures endpoint.
 """
 
 import logging

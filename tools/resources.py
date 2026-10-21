@@ -1,17 +1,12 @@
 """
 MCP resources: static reference material a client can attach to the conversation.
 
-  fpl://schema    — the database schema (tables, columns, notes) for writing correct SQL
-                    with query_historical_stats; the same text as the tool description
   fpl://glossary  — FPL status codes, FDR, positions and which tool answers what
 """
 
 import mcp.types as types
 from pydantic import AnyUrl
 
-from tools.query_historical_stats import SCHEMA_DESCRIPTION
-
-SCHEMA_URI = "fpl://schema"
 GLOSSARY_URI = "fpl://glossary"
 
 GLOSSARY = """\
@@ -36,23 +31,17 @@ Which tool answers what:
   get_fixtures           the fixture list with FDR
   get_fixture_run        how hard a team's next N fixtures are; a ranked fixture ticker
   search_players         find and rank players by stat, team, position, price
+  get_player_history     a player's matches this season (vs an opponent) + past totals
+  get_gameweek_stats     every player's stats for one gameweek, ranked
   get_xpts               expected-points shortlist for a gameweek
   get_manager_squad      a manager's squad and chips from their team ID
   get_live_availability  current injuries and suspensions
-  query_historical_stats SQL over your own history database (only when configured)
+
+Data limits: FPL serves match-by-match data for the current season only. Past seasons are
+season totals, so "how did X do against Y in earlier seasons" cannot be answered.
 """
 
 _RESOURCES: dict[str, tuple[types.Resource, str]] = {
-    SCHEMA_URI: (
-        types.Resource(
-            uri=AnyUrl(SCHEMA_URI),
-            name="schema",
-            title="FPL database schema",
-            description="Tables and columns available to query_historical_stats.",
-            mimeType="text/plain",
-        ),
-        SCHEMA_DESCRIPTION.strip(),
-    ),
     GLOSSARY_URI: (
         types.Resource(
             uri=AnyUrl(GLOSSARY_URI),

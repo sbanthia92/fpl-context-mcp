@@ -1,6 +1,6 @@
 name: Canary
 
-# Calls the hosted endpoint and fails if it is down, erroring, or serving stale data.
+# Calls the hosted endpoint and fails if it is down or erroring.
 # Configure the repository variable MCP_CANARY_URL (e.g. https://mcp.example.com/mcp) and,
 # if the endpoint uses bearer keys, the secret MCP_CANARY_TOKEN. See docs/hosting.md.
 

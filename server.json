@@ -2,31 +2,22 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sbanthia92/fpl-context-mcp",
   "title": "FPL Context",
-  "description": "Live Fantasy Premier League data for AI agents with zero setup, plus optional SQL history.",
+  "description": "Live Fantasy Premier League data for AI agents: fixtures, players, squads, injuries. No setup.",
   "repository": {
     "url": "https://github.com/sbanthia92/fpl-context-mcp",
     "source": "github"
   },
-  "version": "0.10.1",
+  "version": "0.11.0",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "fpl-context-mcp",
-      "version": "0.10.1",
+      "version": "0.11.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
-      },
-      "environmentVariables": [
-        {
-          "name": "DATABASE_URL",
-          "description": "Optional. Read-only PostgreSQL DSN for your FPL stats database (populate it with fpl-context-ingest-match). Without it the live tools work and query_historical_stats is not offered.",
-          "isRequired": false,
-          "isSecret": true,
-          "format": "string"
-        }
-      ]
+      }
     }
   ]
 }

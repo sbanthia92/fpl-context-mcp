@@ -3,7 +3,7 @@ MCP tool: get_manager_squad
 
 A manager's FPL squad for a gameweek, plus the chips they've used, looked up by their
 public team ID (the number in fantasy.premierleague.com/entry/<id>/...). Uses FPL's
-public entry endpoints; needs no login and no database.
+public entry endpoints; needs no login.
 """
 
 import logging

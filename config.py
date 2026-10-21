@@ -34,35 +34,6 @@ class _Config:
     """
 
     @property
-    def database_url(self) -> str:
-        """
-        Read-only PostgreSQL connection string (fpl_readonly user).
-        Used by the MCP query_historical_stats tool.
-        Format: postgresql://user:pass@host:5432/dbname
-        """
-        return os.getenv("DATABASE_URL", "")
-
-    @property
-    def database_etl_url(self) -> str:
-        """
-        Read/write PostgreSQL connection string (fpl_etl user).
-        Used by ingest_match_data to write fixture and player stats rows.
-        Falls back to DATABASE_URL if not set.
-        """
-        return os.getenv("DATABASE_ETL_URL", "") or self.database_url
-
-    @property
-    def dry_run(self) -> bool:
-        """
-        When True, tools return what they *would* do without any side effects, and
-        ingestion jobs fetch data but skip all writes to PostgreSQL.
-
-        Set DRY_RUN=true (or 1 / yes) to enable. Useful for verifying connectivity
-        and configuration before committing to a production run.
-        """
-        return os.getenv("DRY_RUN", "").lower() in ("1", "true", "yes")
-
-    @property
     def mcp_auth_token(self) -> str:
         """
         Shared secret for the HTTP transport (``--transport http``).
@@ -101,11 +72,6 @@ class _Config:
         dodge the rate limit. Empty (default) uses the socket peer address.
         """
         return os.getenv("MCP_CLIENT_IP_HEADER", "").strip()
-
-    @property
-    def max_concurrent_queries(self) -> int:
-        """Max SQL queries running at once in this process (default 4); extras wait briefly."""
-        return max(1, _int_env("MCP_MAX_CONCURRENT_QUERIES", 4))
 
 
 def _int_env(name: str, default: int) -> int:

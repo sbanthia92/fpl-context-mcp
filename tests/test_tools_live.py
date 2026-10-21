@@ -12,7 +12,9 @@ from tools import fpl_client
 from tools.get_current_gameweek import get_current_gameweek
 from tools.get_fixture_run import get_fixture_run
 from tools.get_fixtures import get_fixtures
+from tools.get_gameweek_stats import get_gameweek_stats
 from tools.get_manager_squad import get_manager_squad
+from tools.get_player_history import get_player_history
 from tools.get_xpts import estimate_xpts, get_xpts
 from tools.search_players import search_players
 
@@ -328,15 +330,6 @@ async def test_server_lists_and_dispatches_live_tools():
         await server.call_tool("nope", {})
 
 
-async def test_query_tool_hidden_without_database(monkeypatch):
-    import server
-
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    names = {t.name for t in await server.list_tools()}
-    assert "query_historical_stats" not in names
-    assert "get_fixtures" in names
-
-
 # --- get_fixture_run ---------------------------------------------------------
 
 
@@ -445,3 +438,187 @@ async def test_server_lists_typed_tools():
     assert {"get_fixture_run", "get_xpts"} <= names
     result = await server.call_tool("get_fixture_run", {"team": "Arsenal"})
     assert "Arsenal" in result[0].text
+
+
+# --- get_player_history ------------------------------------------------------
+
+SUMMARY = {
+    "history": [
+        {
+            "round": 2,
+            "opponent_team": 2,
+            "was_home": True,
+            "team_h_score": 1,
+            "team_a_score": 2,
+            "minutes": 90,
+            "goals_scored": 1,
+            "assists": 0,
+            "clean_sheets": 0,
+            "bonus": 2,
+            "expected_goals": "0.80",
+            "expected_assists": "0.10",
+            "total_points": 8,
+            "kickoff_time": "2026-08-23T15:00:00Z",
+        },
+        {
+            "round": 1,
+            "opponent_team": 3,
+            "was_home": False,
+            "team_h_score": 0,
+            "team_a_score": 3,
+            "minutes": 80,
+            "goals_scored": 0,
+            "assists": 1,
+            "clean_sheets": 1,
+            "bonus": 0,
+            "expected_goals": "0.20",
+            "expected_assists": "0.50",
+            "total_points": 6,
+            "kickoff_time": "2026-08-16T15:00:00Z",
+        },
+    ],
+    "history_past": [
+        {
+            "season_name": "2025/26",
+            "total_points": 200,
+            "minutes": 3000,
+            "goals_scored": 10,
+            "assists": 9,
+            "clean_sheets": 12,
+            "bonus": 20,
+            "start_cost": 100,
+            "end_cost": 105,
+        }
+    ],
+}
+
+LIVE = {
+    "elements": [
+        {
+            "id": 10,
+            "stats": {
+                "minutes": 90,
+                "goals_scored": 1,
+                "assists": 1,
+                "clean_sheets": 0,
+                "bonus": 3,
+                "expected_goals": "0.9",
+                "expected_assists": "0.3",
+                "total_points": 12,
+            },
+        },
+        {"id": 11, "stats": {"minutes": 90, "goals_scored": 0, "total_points": 2}},
+        {"id": 12, "stats": {"minutes": 0, "total_points": 0}},
+    ]
+}
+
+
+def fetch_with_extras(path):
+    if path.startswith("element-summary/10/"):
+        return SUMMARY
+    if path == "event/2/live/":
+        return LIVE
+    return fake_fetch(path)
+
+
+@pytest.fixture
+def extras():
+    with patch.object(fpl_client, "_fetch", side_effect=fetch_with_extras):
+        yield
+
+
+async def test_player_history_matches_and_past_seasons(extras):
+    out = await get_player_history("Saka")
+    assert "Bukayo Saka (Saka) — Arsenal, MID, £10.0m" in out
+    lines = out.splitlines()
+    gw1 = next(line for line in lines if line.startswith("1 |"))
+    gw2 = next(line for line in lines if line.startswith("2 |"))
+    assert lines.index(gw1) < lines.index(gw2)  # chronological
+    assert "MUN (A)" in gw1 and "MCI (H)" in gw2
+    assert "Total over 2 match(es): 14 pts, 1 G, 1 A, 1 CS in 2 appearance(s)" in out
+    assert "2025/26 | 200 | 3000 | 10 | 9 | 12 | 20 | £10.0m | £10.5m" in out
+
+
+async def test_player_history_opponent_filter_and_caveat(extras):
+    out = await get_player_history("Saka", opponent="Man City")
+    assert "against Man City" in out and "MCI (H)" in out and "MUN" not in out
+    assert "results against Man City in earlier seasons are not available" in out
+
+
+async def test_player_history_opponent_never_met_and_last_n(extras):
+    out = await get_player_history("Saka", opponent="Arsenal")
+    assert "No matches this season against Arsenal yet." in out
+    out = await get_player_history("Saka", last_n=1)
+    assert "MCI (H)" in out and "MUN (A)" not in out
+
+
+async def test_player_history_name_resolution_and_errors(extras):
+    assert (await get_player_history("Zzz")).startswith("Error: no player matches")
+    assert (await get_player_history("")).startswith("Error: give a player name")
+    assert (await get_player_history("Saka", last_n="x")).startswith("Error: last_n")
+    assert "no team matches" in await get_player_history("Saka", opponent="Nope")
+    # "a" matches several players: error lists candidates instead of guessing
+    out = await get_player_history("a")
+    assert out.startswith("Error: 'a' matches several players") and "Haaland" in out
+
+
+def test_find_player_prefers_exact_web_name():
+    boot = {
+        "teams": BOOTSTRAP["teams"],
+        "elements": [
+            {**BOOTSTRAP["elements"][0], "id": 1, "web_name": "Gabriel", "first_name": "Gabriel"},
+            {**BOOTSTRAP["elements"][0], "id": 2, "web_name": "Jesus", "first_name": "Gabriel"},
+        ],
+    }
+    player, err = fpl_client.find_player(boot, "gabriel")
+    assert player["id"] == 1 and err is None  # exact web_name beats first-name substring
+
+
+# --- get_gameweek_stats ------------------------------------------------------
+
+
+async def test_gameweek_stats_ranks_and_skips_non_players(extras):
+    out = await get_gameweek_stats(gameweek=2)
+    rows = out.splitlines()
+    assert rows[0] == "Gameweek 2 stats, sorted by total_points"
+    assert rows[4].startswith("Saka") and "| 12" in rows[4]
+    assert rows[5].startswith("Haaland")
+    assert "Foden" not in out  # 0 minutes
+
+
+async def test_gameweek_stats_defaults_to_latest_with_results(extras):
+    out = await get_gameweek_stats()
+    assert out.startswith("Gameweek 2 stats")  # gw 2 is current and finished
+
+
+async def test_gameweek_stats_filters_and_validation(extras):
+    assert "Haaland" not in await get_gameweek_stats(gameweek=2, team="Arsenal")
+    assert "Saka" not in await get_gameweek_stats(gameweek=2, position="FWD")
+    assert "No players with minutes" in await get_gameweek_stats(gameweek=2, team="Man Utd")
+    assert (await get_gameweek_stats(gameweek=0)).startswith("Error: gameweek")
+    assert (await get_gameweek_stats(sort_by="vibes")).startswith("Error: unknown sort_by")
+    assert (await get_gameweek_stats(position="x")).startswith("Error: position")
+
+
+async def test_gameweek_in_progress_is_labelled(extras):
+    boot = {
+        **BOOTSTRAP,
+        "events": [{**BOOTSTRAP["events"][1], "finished": False}, *BOOTSTRAP["events"][2:]],
+    }
+
+    def fetch(path):
+        return boot if path == "bootstrap-static/" else fetch_with_extras(path)
+
+    with patch.object(fpl_client, "_fetch", side_effect=fetch):
+        out = await get_gameweek_stats(gameweek=2)
+    assert "in progress" in out
+
+
+async def test_server_lists_history_tools(extras):
+    import server
+
+    names = {t.name for t in await server.list_tools()}
+    assert {"get_player_history", "get_gameweek_stats"} <= names
+    assert "query_historical_stats" not in names
+    result = await server.call_tool("get_player_history", {"player": "Saka", "last_n": 1})
+    assert "Saka" in result[0].text

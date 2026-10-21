@@ -1,11 +1,5 @@
-"""Tests for tools/ratelimit.py and the SQL tool's concurrency cap."""
+"""Tests for tools/ratelimit.py."""
 
-import asyncio
-from unittest.mock import AsyncMock, patch
-
-import pytest
-
-from tools import query_historical_stats as qhs
 from tools.ratelimit import RateLimiter
 
 
@@ -37,46 +31,3 @@ def test_key_table_is_bounded():
     for i in range(10):
         rl.check(f"k{i}")
     assert len(rl._counts) <= 3
-
-
-@pytest.fixture
-def one_slot(monkeypatch):
-    monkeypatch.setenv("MCP_MAX_CONCURRENT_QUERIES", "1")
-    monkeypatch.setattr(qhs, "_slots", None)
-    monkeypatch.setattr(qhs, "_SLOT_WAIT_SECONDS", 0.05)
-    yield
-    monkeypatch.setattr(qhs, "_slots", None)
-
-
-async def test_busy_server_rejects_instead_of_queueing_forever(one_slot):
-    gate = asyncio.Event()
-
-    async def slow_connect(*args, **kwargs):
-        await gate.wait()
-        conn = AsyncMock()
-        conn.fetch.return_value = []
-        return conn
-
-    with patch.object(qhs.asyncpg, "connect", side_effect=slow_connect):
-        first = asyncio.create_task(qhs.query_historical_stats("SELECT 1"))
-        await asyncio.sleep(0.01)
-        second = await qhs.query_historical_stats("SELECT 2")
-        gate.set()
-        await first
-    assert second.startswith("Error: the server is busy")
-
-
-async def test_slot_is_released_after_a_query(one_slot):
-    conn = AsyncMock()
-    conn.fetch.return_value = []
-    with patch.object(qhs.asyncpg, "connect", AsyncMock(return_value=conn)):
-        await qhs.query_historical_stats("SELECT 1")
-        out = await qhs.query_historical_stats("SELECT 2")
-    assert out == "Query returned no results."
-
-
-async def test_connection_failure_is_reported_without_details_leak(one_slot):
-    with patch.object(qhs.asyncpg, "connect", AsyncMock(side_effect=OSError("secret-host:5432"))):
-        out = await qhs.query_historical_stats("SELECT 1")
-    assert out == "Database error: could not connect (OSError)."
-    assert "secret-host" not in out

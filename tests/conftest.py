@@ -1,20 +1,6 @@
 """
 Shared pytest fixtures for fpl-context-mcp tests.
 
-All external calls (HTTP, PostgreSQL) are mocked here so tests
-never hit real APIs or databases.
+All external calls (HTTP to the FPL API) are mocked in the tests themselves so they never
+hit the real API.
 """
-
-import pytest
-
-
-@pytest.fixture(autouse=True)
-def set_env(monkeypatch):
-    """
-    Inject minimal environment variables before every test.
-
-    Uses monkeypatch so values are restored after each test — no bleed between
-    test cases.
-    """
-    monkeypatch.setenv("DATABASE_URL", "postgresql://readonly:pass@localhost/fpl")
-    monkeypatch.setenv("DATABASE_ETL_URL", "postgresql://etl:pass@localhost/fpl")

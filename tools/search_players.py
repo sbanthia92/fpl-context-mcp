@@ -2,7 +2,7 @@
 MCP tool: search_players
 
 Find and rank current-season FPL players by name, team, position and price, using the
-live bootstrap-static data. Needs no database.
+live bootstrap-static data.
 """
 
 import logging

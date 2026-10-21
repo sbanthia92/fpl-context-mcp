@@ -1,5 +1,5 @@
 """
-Shared client for the public FPL API, used by every live (no-database) tool.
+Shared client for the public FPL API, used by every tool.
 
 Responsibilities:
   - one sync ``requests`` GET (run in a worker thread) with a User-Agent and timeout
@@ -28,6 +28,9 @@ TIMEOUT_SECONDS = 15
 TTL_BOOTSTRAP = 300
 TTL_FIXTURES = 300
 TTL_ENTRY = 120
+TTL_ELEMENT = 300  # a player's per-match history
+TTL_LIVE_FINISHED = 3600  # a finished gameweek's stats barely change (bonus is final)
+TTL_LIVE_ACTIVE = 120
 
 _MAX_CACHE_ENTRIES = 256
 
@@ -138,6 +141,40 @@ def player_matches(player: dict, needles: list[str]) -> bool:
     )
     haystack = haystack.lower()
     return any(n in haystack for n in needles)
+
+
+def find_player(boot: dict, query: str) -> tuple[dict | None, str | None]:
+    """
+    Resolve a free-text player name to one bootstrap element.
+
+    Prefers an exact (case-insensitive) match on web name or full name, then a unique
+    substring match. Returns (player, None) or (None, error message) when nothing matches
+    or several players do, listing candidates so the caller can be more specific.
+    """
+    q = query.strip().lower()
+    if not q:
+        return None, "Error: give a player name."
+    players = boot.get("elements", [])
+    matches = [p for p in players if player_matches(p, [q])]
+    if not matches:
+        return None, f"Error: no player matches {query!r}."
+    if len(matches) > 1:
+        exact = [
+            p
+            for p in matches
+            if q in (p["web_name"].lower(), f"{p['first_name']} {p['second_name']}".lower())
+        ]
+        if len(exact) == 1:
+            return exact[0], None
+        teams = teams_by_id(boot)
+        matches.sort(key=lambda p: p.get("total_points", 0), reverse=True)
+        shown = ", ".join(
+            f"{p['web_name']} ({teams.get(p['team'], {}).get('short_name', '?')}, "
+            f"{POSITIONS.get(p['element_type'], '?')})"
+            for p in matches[:8]
+        )
+        return None, f"Error: {query!r} matches several players: {shown}. Be more specific."
+    return matches[0], None
 
 
 def current_gameweek(boot: dict) -> dict | None:

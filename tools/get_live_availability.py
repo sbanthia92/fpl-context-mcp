@@ -4,7 +4,7 @@ MCP tool: get_live_availability
 Fetches every player's current FPL availability (status, chance of playing and the
 news note) straight from the FPL API's bootstrap-static endpoint, so injury and
 suspension flags are as fresh as FPL's own site rather than as fresh as the last
-ingestion run. Needs no database.
+a refresh job.
 
 One request returns every player, and the response is cached for a few minutes, so
 even heavy use costs FPL only a handful of calls per hour. If FPL is unreachable the
@@ -62,10 +62,7 @@ async def get_live_availability(
         bootstrap, stale = await fpl_client.bootstrap()
     except Exception as exc:
         log.error("Could not fetch live availability: %s", exc, exc_info=True)
-        return (
-            f"Error: could not reach the FPL API ({exc}). "
-            "query_historical_stats has the availability stored at the last ingestion."
-        )
+        return fpl_client.unreachable_error(exc)
 
     teams = {t["id"]: t["short_name"] for t in bootstrap.get("teams", [])}
     rows = []

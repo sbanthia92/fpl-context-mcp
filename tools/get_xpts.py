@@ -4,7 +4,7 @@ MCP tool: get_xpts
 A transparent expected-points estimate for the next gameweek, built from each player's
 season-to-date underlying stats (xG, xA, clean sheets, saves, bonus per 90), expected
 minutes, availability and the fixture's difficulty. Shown next to FPL's own ``ep_next``
-so the two can be compared. Live FPL data; needs no database.
+so the two can be compared. Live FPL data.
 
 This is a deliberately simple baseline, not a forecast model: it extrapolates the season
 so far, so it is noisy in the first few gameweeks and knows nothing about rotation,

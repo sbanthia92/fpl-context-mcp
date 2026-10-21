@@ -147,7 +147,6 @@ async def test_failure_without_cache_returns_error():
     with patch.object(fpl_client, "_fetch", side_effect=RuntimeError("boom")):
         out = await get_live_availability()
     assert out.startswith("Error: could not reach the FPL API")
-    assert "query_historical_stats" in out
 
 
 async def test_row_cap_notice():
@@ -168,7 +167,7 @@ async def test_server_registers_and_dispatches_tool():
     import server
 
     tools = await server.list_tools()
-    assert {t.name for t in tools} >= {"query_historical_stats", "get_live_availability"}
+    assert "get_live_availability" in {t.name for t in tools}
 
     with patch.object(fpl_client, "_fetch", return_value=BOOTSTRAP):
         result = await server.call_tool("get_live_availability", {"players": ["Saka"]})

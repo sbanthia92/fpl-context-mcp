@@ -1,7 +1,7 @@
 [project]
 name = "fpl-context-mcp"
-version = "0.10.1"
-description = "MCP server that gives any AI agent live Fantasy Premier League data (gameweek, fixtures, players, manager squads, injuries) with zero setup, plus optional read-only SQL over your own PostgreSQL history."
+version = "0.11.0"
+description = "MCP server that gives any AI agent live Fantasy Premier League data (gameweek, fixtures, players, match history, manager squads, injuries) straight from the FPL API, with zero setup."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -24,11 +24,7 @@ dependencies = [
     # the mcp 1.x low-level Server decorator API (@server.list_tools() etc.),
     # which mcp 2.x removed/rewrote entirely.
     "mcp>=1.8.0,<2.0.0",
-    # Async PostgreSQL client — used by the MCP query tool (server is async)
-    "asyncpg>=0.29.0",
-    # Sync PostgreSQL client — used by the threaded ingest_match_data job
-    "psycopg2-binary>=2.9.9",
-    # Sync HTTP client — used by both threaded ingestion jobs
+    # Sync HTTP client — the FPL API client (run in worker threads) and the canary script
     "requests>=2.32.0",
     # .env file support for local development
     "python-dotenv>=1.0.0",
@@ -49,15 +45,13 @@ Issues = "https://github.com/sbanthia92/fpl-context-mcp/issues"
 
 [project.scripts]
 fpl-context-mcp = "server:main"
-fpl-context-ingest-match = "jobs.ingest_match_data:main"
-fpl-context-backfill-history = "jobs.backfill_history:main"
 
 # Run the MCP server: cd fpl-context-mcp && python server.py
 # (stdio transport — register in claude_desktop_config.json or via mcp install)
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["tools*", "jobs*"]
+include = ["tools*"]
 
 [tool.setuptools]
 py-modules = ["config", "server"]
