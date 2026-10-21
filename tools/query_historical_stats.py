@@ -12,6 +12,7 @@ Safety guarantees:
   - Result cap: 100 rows
 """
 
+import asyncio
 import logging
 
 import asyncpg
@@ -38,6 +39,21 @@ _BLOCKED_KEYWORDS = {
 
 # Maximum rows returned per query to keep response payloads manageable.
 _MAX_ROWS = 100
+
+# How long a query waits for a free slot before giving up (hosted servers share one
+# database between many callers), and how long a connection attempt may take.
+_SLOT_WAIT_SECONDS = 5
+_CONNECT_TIMEOUT_SECONDS = 5
+
+_slots: asyncio.Semaphore | None = None
+
+
+def _get_slots() -> asyncio.Semaphore:
+    global _slots
+    if _slots is None:
+        _slots = asyncio.Semaphore(cfg.max_concurrent_queries)
+    return _slots
+
 
 # Hard limit on query execution time (milliseconds).
 _STATEMENT_TIMEOUT_MS = 10_000
@@ -184,16 +200,32 @@ async def query_historical_stats(sql: str) -> str:
             f"Would have executed against {host}:\n\n{normalized}"
         )
 
-    conn: asyncpg.Connection = await asyncpg.connect(
-        cfg.database_url,
-        statement_cache_size=0,  # avoid prepared-statement conflicts on read-only connections
-    )
+    try:
+        await asyncio.wait_for(_get_slots().acquire(), timeout=_SLOT_WAIT_SECONDS)
+    except TimeoutError:
+        return "Error: the server is busy running other queries. Try again in a few seconds."
+    try:
+        return await _run_query(normalized, sql)
+    finally:
+        _get_slots().release()
+
+
+async def _run_query(normalized: str, original_sql: str) -> str:
+    try:
+        conn: asyncpg.Connection = await asyncpg.connect(
+            cfg.database_url,
+            statement_cache_size=0,  # avoid prepared-statement conflicts on read-only connections
+            timeout=_CONNECT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        log.error("Could not connect to PostgreSQL: %s", exc, exc_info=True)
+        return f"Database error: could not connect ({type(exc).__name__})."
     try:
         # Set a per-statement timeout so runaway queries don't block the MCP server.
         await conn.execute(f"SET statement_timeout = {_STATEMENT_TIMEOUT_MS}")
         rows = await conn.fetch(normalized)
     except asyncpg.PostgresError as exc:
-        log.error("PostgreSQL query failed: %s | sql=%r", exc, sql, exc_info=True)
+        log.error("PostgreSQL query failed: %s | sql=%r", exc, original_sql, exc_info=True)
         if isinstance(exc, _SCHEMA_ERRORS):
             return f"Database error: {exc}\n\n{_SCHEMA_HINT}"
         return f"Database error: {exc}"

@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-20
+
+### Added
+
+- **Hosting hardening for the HTTP transport**, so one deployment can safely serve many
+  people:
+  - `MCP_RATE_LIMIT_PER_MIN` — per-caller request limit on `/mcp` (keyed by bearer token,
+    else client IP), answering `429` with `Retry-After`. `/health` is never limited. Off by
+    default; the server warns at startup when it is public with no limit.
+  - `MCP_CLIENT_IP_HEADER` — read the real client IP from a trusted proxy's header
+    (e.g. `Fly-Client-IP`) so the limit isn't applied to the proxy itself.
+  - `MCP_AUTH_TOKEN` now accepts several comma-separated tokens, so each user can have
+    their own key and one can be revoked without rotating the rest.
+  - `MCP_MAX_CONCURRENT_QUERIES` (default 4) — SQL queries beyond the cap wait up to 5
+    seconds, then get a "server busy" answer instead of piling onto the database.
+- **`Dockerfile`** for running the HTTP server as a container: non-root user, health check
+  on `/health`, listens on `$MCP_PORT`, else `$PORT`, else 8000, and defaults to a 120/min
+  rate limit.
+- **`db/hosted_role.sql`**: a hardened `fpl_readonly` role for public deployments (SELECT
+  on the six tables only, connection limit, read-only transactions, server-side
+  statement/lock/idle timeouts), because on a shared endpoint the role, not the keyword
+  blocklist, is what bounds arbitrary SELECTs.
+- **`scripts/canary.py` and a `canary.yml` workflow** that check a hosted endpoint every 15
+  minutes: it must initialise, answer a live tool, and (if the SQL tool is offered) hold
+  data no more than one finished gameweek behind FPL, which catches a stalled ingestion
+  job. Configure with the `MCP_CANARY_URL` variable (and `MCP_CANARY_TOKEN` secret for keyed
+  endpoints); it skips quietly when unset.
+- **`docs/hosting.md`**: a checklist for running a public endpoint (database role, container,
+  TLS, proxy IP header, monitoring), auth modes (open for ChatGPT/claude.ai connectors vs
+  keyed), sizing and what you take on.
+- The SQL tool now times out connecting after 5 seconds and no longer echoes connection
+  errors (hostnames) back to the caller.
+
 ## [0.9.0] — 2026-10-20
 
 ### Added
