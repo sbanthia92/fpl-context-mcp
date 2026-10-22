@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-10-22
+
+### Changed
+
+- Tool descriptions no longer say "(no database needed)". Descriptions now state what each
+  tool does and where the data comes from. No behaviour change.
+
 ## [0.11.0] — 2026-10-21
 
 Breaking: the database is gone. The server is now purely live: it needs no database and no

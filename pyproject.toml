@@ -1,6 +1,6 @@
 [project]
 name = "fpl-context-mcp"
-version = "0.11.0"
+version = "0.11.1"
 description = "MCP server that gives any AI agent live Fantasy Premier League data (gameweek, fixtures, players, match history, manager squads, injuries) straight from the FPL API, with zero setup."
 readme = "README.md"
 license = "MIT"
