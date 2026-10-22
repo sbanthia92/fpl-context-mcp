@@ -138,7 +138,7 @@ _register(
         name="get_live_availability",
         description=(
             "Current FPL injury, suspension and availability flags, fetched live from "
-            "the FPL API (no database needed). Call this before recommending, picking "
+            "the FPL API. Call this before recommending, picking "
             "or captaining any player, so a newly flagged or suspended player isn't "
             "missed. With no arguments it lists every player who currently has a flag, "
             "newest news first. Pass player names to check specific players (returned "
@@ -175,7 +175,7 @@ _register(
         name="get_current_gameweek",
         description=(
             "The current and next FPL gameweek and the transfer deadline, live from the "
-            "FPL API (no database needed). Use it to anchor 'this week' / 'next week' "
+            "FPL API. Use it to anchor 'this week' / 'next week' "
             "questions and to say how long a manager has left to make transfers."
         ),
         inputSchema={"type": "object", "properties": {}},
@@ -189,7 +189,7 @@ _register(
         name="get_fixtures",
         description=(
             "FPL fixtures with difficulty ratings (FDR, 1 easiest to 5 hardest), live "
-            "from the FPL API (no database needed). With no arguments lists the next 5 "
+            "from the FPL API. With no arguments lists the next 5 "
             "gameweeks for every team. Pass team to see one team's run from its own point "
             "of view, gameweek for a single round, or gameweeks_ahead for a longer window."
         ),
@@ -224,8 +224,8 @@ _register(
     types.Tool(
         name="search_players",
         description=(
-            "Find and rank current-season FPL players, live from the FPL API (no database "
-            "needed): by name, team, position and maximum price, sorted by a chosen stat. "
+            "Find and rank current-season FPL players, live from the FPL API: by name, "
+            "team, position and maximum price, sorted by a chosen stat. "
             "Returns price, total points, form, ownership, FPL's expected points for the "
             "next gameweek (ep_next) and availability status. Use it for 'best midfielders "
             "under £8m', 'how is Palmer doing', or to find a replacement."
@@ -271,7 +271,7 @@ _register(
         description=(
             "A manager's FPL squad for a gameweek, with captain, bench, bank, squad value, "
             "transfers and the chips they have used, looked up by their FPL team ID "
-            "(live from FPL's public API, no login or database needed). The team ID is the "
+            "(live from FPL's public API, no login needed). The team ID is the "
             "number in the URL of the manager's FPL Points page. Use it as the starting "
             "point for transfer, captain and chip advice on their actual team."
         ),
@@ -298,8 +298,8 @@ _register(
     types.Tool(
         name="get_fixture_run",
         description=(
-            "How easy or hard a team's next few fixtures are, live from the FPL API (no "
-            "database needed): average FDR (1 easiest, 5 hardest), home/away split, and "
+            "How easy or hard a team's next few fixtures are, live from the FPL API: "
+            "average FDR (1 easiest, 5 hardest), home/away split, and "
             "blank or double gameweeks. Pass team for its fixture-by-fixture run; omit it "
             "to rank all 20 teams, easiest run first. Prefer this over get_fixtures when "
             "judging transfers, captaincy or chip timing."
@@ -326,7 +326,7 @@ _register(
         name="get_xpts",
         description=(
             "Rank players by estimated expected points (xPts) for a gameweek, live from "
-            "the FPL API (no database needed). A transparent baseline built from season "
+            "the FPL API. A transparent baseline built from season "
             "xG/xA/clean-sheet/save/bonus rates, expected minutes, availability and fixture "
             "difficulty, shown beside FPL's own ep_next. Filter by position, team and max "
             "price. Good for captain shortlists and finding transfer targets; it is "
@@ -371,8 +371,8 @@ _register(
         description=(
             "A player's match-by-match record this season (minutes, goals, assists, clean "
             "sheets, bonus, xG/xA, points), optionally only against one opponent or the last "
-            "N matches, plus their season totals for past seasons. Live from the FPL API (no "
-            "database needed). Use it for 'how has Saka done against Spurs this season' or "
+            "N matches, plus their season totals for past seasons. Live from the FPL API. "
+            "Use it for 'how has Saka done against Spurs this season' or "
             "'is his form real'. FPL provides match-level data for the current season only; "
             "past seasons are totals, so opponent splits for earlier seasons do not exist."
         ),
@@ -405,7 +405,7 @@ _register(
         name="get_gameweek_stats",
         description=(
             "Every player's stats for one gameweek, ranked (default: the latest gameweek with "
-            "results, sorted by points). Live from the FPL API (no database needed). Use it "
+            "results, sorted by points). Live from the FPL API. Use it "
             "for 'top scorers last week', 'which defenders kept clean sheets in GW9' or "
             "'who got the most bonus'. Filter by position and team."
         ),

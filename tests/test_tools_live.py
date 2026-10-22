@@ -1,5 +1,5 @@
 """
-Tests for the live (no-database) FPL tools and the shared client.
+Tests for the live FPL tools and the shared client.
 
 The FPL API is mocked at ``fpl_client._fetch`` — no network access is required.
 """
