@@ -117,6 +117,27 @@ unlimited `/health`. See `docs/hosting.md` for the deployment checklist and `scr
 `canary.yml` for monitoring. ChatGPT/claude.ai connectors can't send a bearer key, so a public
 endpoint for them must run open — the rate limit is the protection.
 
+## Potential next features
+Ideas only, not committed to. All fit the guardrails: public FPL API, no database, built on
+`tools/fpl_client.py`. Cheapest first.
+- **`get_price_changes`**: risers/fallers and likely movers from bootstrap `elements`
+  (`cost_change_event`, `transfers_in_event`, `transfers_out_event`, `selected_by_percent`). No extra API calls.
+- **`get_set_pieces`**: penalty, corner and free-kick takers per team from bootstrap `elements`
+  (`penalties_order`, `corners_and_indirect_freekicks_order`, `direct_freekicks_order`).
+- **`get_team_strength`**: home/away attack and defence strength table from bootstrap `teams`
+  (`strength_*` fields); pairs with `get_fixture_run`.
+- **`get_dream_team`**: team of the week from `dream-team/{gw}/`.
+- **`get_league_standings`**: classic league table by league id from `leagues-classic/{id}/standings/`
+  (page-capped; one request per page).
+- **`get_manager_transfers`**: a manager's transfer history from `entry/{id}/transfers/`; complements `get_manager_squad`.
+- **`compare_players`**: side-by-side stats, form, xPts and next fixtures for 2–4 players, composed from existing helpers.
+- **Differentials**: `search_players` preset or tool for low-ownership, high-form players.
+- **Prompts**: `differential_hunt`, `wildcard_draft` (instruction text only, like the existing three).
+- **Hosting**: optional Redis-backed cache and rate limiter for multi-instance deployments; `/metrics` endpoint.
+- **Registry polish**: keep Glama, mcprush and MCP Registry listings in sync after each release (descriptions and tool lists go stale).
+
+When one ships, move it into the tool table above and the README, and drop it from this list.
+
 ## Git workflow
 - **Branch from main**: `git checkout -b fix/description origin/main`
 - **PR per change** — keep commits small and descriptive
