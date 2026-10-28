@@ -38,6 +38,7 @@ fpl-context-mcp/
     resources.py                   # MCP resource: fpl://glossary
     ratelimit.py                   # per-caller rate limiter for the HTTP transport
   scripts/canary.py                # Health check of a hosted endpoint
+  docs/architecture.md             # Layers, request flow, design decisions and trade-offs
   docs/hosting.md                  # Running a public endpoint
   tests/                           # pytest; everything mocked at fpl_client._fetch
   Dockerfile                       # Hosted HTTP server image (non-root, health check)
