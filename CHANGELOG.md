@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-10-28
+
+### Changed
+
+- Concurrent requests for the same FPL path now share one fetch, so a cold start or an expired
+  cache entry under load sends FPL one request instead of one per caller.
+- When FPL is unreachable, a cached copy is served only if it is under 6 hours old
+  (`MAX_STALE_SECONDS`); older data now returns the "could not reach the FPL API" error instead of
+  a possibly days-old answer.
+- Added `docs/architecture.md` (layers, request flow, design decisions and trade-offs).
+
 ## [0.11.1] — 2026-10-22
 
 ### Changed

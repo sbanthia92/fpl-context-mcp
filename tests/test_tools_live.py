@@ -199,6 +199,64 @@ async def test_cache_evicts_oldest_when_full(monkeypatch):
     assert set(fpl_client._cache) == {"b", "c"}
 
 
+async def test_concurrent_misses_share_one_fetch():
+    import asyncio
+    import time
+
+    calls = []
+
+    def slow_fetch(path):
+        calls.append(path)
+        time.sleep(0.05)
+        return {"ok": True}
+
+    with patch.object(fpl_client, "_fetch", side_effect=slow_fetch):
+        results = await asyncio.gather(*(fpl_client.get("x/", 60) for _ in range(8)))
+    assert calls == ["x/"]
+    assert all(r == ({"ok": True}, False) for r in results)
+    assert not fpl_client._inflight
+
+
+async def test_concurrent_callers_all_see_a_shared_failure():
+    import asyncio
+
+    with patch.object(fpl_client, "_fetch", side_effect=RuntimeError("boom")) as fetch:
+        results = await asyncio.gather(
+            *(fpl_client.get("x/", 60) for _ in range(4)), return_exceptions=True
+        )
+    assert fetch.call_count == 1
+    assert all(isinstance(r, RuntimeError) for r in results)
+    assert not fpl_client._inflight
+
+
+async def test_cancelled_caller_does_not_cancel_shared_fetch():
+    import asyncio
+    import time
+
+    def slow_fetch(path):
+        time.sleep(0.05)
+        return {"ok": True}
+
+    with patch.object(fpl_client, "_fetch", side_effect=slow_fetch):
+        first = asyncio.ensure_future(fpl_client.get("x/", 60))
+        second = asyncio.ensure_future(fpl_client.get("x/", 60))
+        await asyncio.sleep(0)
+        first.cancel()
+        assert await second == ({"ok": True}, False)
+
+
+async def test_stale_copy_older_than_max_age_is_not_served(monkeypatch):
+    with patch.object(fpl_client, "_fetch", return_value={"v": 1}):
+        await fpl_client.get("x/", 60)
+    fetched_at, data = fpl_client._cache["x/"]
+    with patch.object(fpl_client, "_fetch", side_effect=RuntimeError("boom")):
+        fpl_client._cache["x/"] = (fetched_at - 61, data)
+        assert await fpl_client.get("x/", 60) == ({"v": 1}, True)
+        fpl_client._cache["x/"] = (fetched_at - fpl_client.MAX_STALE_SECONDS - 1, data)
+        with pytest.raises(RuntimeError):
+            await fpl_client.get("x/", 60)
+
+
 def test_resolve_team_variants():
     assert fpl_client.resolve_team(BOOTSTRAP, "mci")[0]["id"] == 2
     assert fpl_client.resolve_team(BOOTSTRAP, "Arsenal")[0]["id"] == 1

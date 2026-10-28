@@ -88,7 +88,7 @@ when `python-dotenv` is installed):
 
 Every tool is registered once in `server.py` via `_register(Tool, handler)` and carries
 `readOnlyHint` annotations. All tools share `tools/fpl_client.py` (one cached `bootstrap-static`
-download; per-path TTLs; stale fallback; 256-entry cap). Add new tools on top of it — do not add a
+download; per-path TTLs; shared in-flight fetches; stale fallback capped at 6 h; 256-entry cap). Add new tools on top of it — do not add a
 second HTTP client. Tools return plain-text tables, validate their inputs, and resolve names
 through `fpl_client.resolve_team` / `fpl_client.find_player` (which list candidates when ambiguous).
 
