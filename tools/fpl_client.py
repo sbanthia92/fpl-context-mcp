@@ -5,7 +5,10 @@ Responsibilities:
   - one sync ``requests`` GET (run in a worker thread) with a User-Agent and timeout
   - an in-memory TTL cache per URL path, so several tools share one bootstrap-static
     download and heavy use costs FPL only a few calls an hour
-  - stale-cache fallback when FPL is unreachable (the caller is told the data is stale)
+  - one in-flight fetch per path, shared by concurrent callers, so a cold or expired cache
+    under load costs FPL one request, not one per caller
+  - stale-cache fallback when FPL is unreachable (the caller is told the data is stale),
+    up to ``MAX_STALE_SECONDS``; older data is treated as unavailable
   - small lookup helpers (team / player name resolution, table formatting)
 
 Only the public, unauthenticated endpoints are used.
@@ -34,11 +37,17 @@ TTL_LIVE_ACTIVE = 120
 
 _MAX_CACHE_ENTRIES = 256
 
+# How old a cached copy may be and still be served when FPL is unreachable. Beyond this a
+# failed refresh raises instead: an injury list or squad from days ago is worse than an error.
+MAX_STALE_SECONDS = 6 * 3600
+
 POSITIONS = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
 POSITION_IDS = {v: k for k, v in POSITIONS.items()}
 
 # path -> (monotonic fetch time, data)
 _cache: dict[str, tuple[float, object]] = {}
+# path -> the fetch currently running for it, shared by every caller that needs that path
+_inflight: dict[str, asyncio.Task] = {}
 
 
 class FPLNotFound(Exception):
@@ -47,6 +56,7 @@ class FPLNotFound(Exception):
 
 def clear_cache() -> None:
     _cache.clear()
+    _inflight.clear()
 
 
 def _fetch(path: str):
@@ -60,30 +70,48 @@ def _fetch(path: str):
     return resp.json()
 
 
+async def _refresh(path: str):
+    """Fetch ``path`` once and store it in the cache."""
+    try:
+        data = await asyncio.to_thread(_fetch, path)
+        if len(_cache) >= _MAX_CACHE_ENTRIES:
+            _cache.pop(min(_cache, key=lambda k: _cache[k][0]))
+        _cache[path] = (time.monotonic(), data)
+        return data
+    finally:
+        _inflight.pop(path, None)
+
+
 async def get(path: str, ttl: int) -> tuple[object, bool]:
     """
     Return (data, is_stale) for an FPL API path.
 
-    Serves the cache while it is younger than ``ttl``. On a fetch failure falls back
-    to an older cached copy (is_stale=True) and only raises when there is none.
-    ``FPLNotFound`` is never masked by the cache.
+    Serves the cache while it is younger than ``ttl``. Concurrent callers that miss the
+    cache share one fetch. On a fetch failure falls back to a cached copy no older than
+    ``MAX_STALE_SECONDS`` (is_stale=True) and otherwise raises. ``FPLNotFound`` is never
+    masked by the cache.
     """
     now = time.monotonic()
     cached = _cache.get(path)
     if cached is not None and now - cached[0] < ttl:
         return cached[1], False
+    task = _inflight.get(path)
+    if task is None:
+        task = asyncio.ensure_future(_refresh(path))
+        # Retrieve the result so a fetch nobody is still waiting on doesn't log
+        # "exception was never retrieved".
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        _inflight[path] = task
     try:
-        data = await asyncio.to_thread(_fetch, path)
+        # shield: one caller being cancelled must not cancel the fetch the others share.
+        data = await asyncio.shield(task)
     except FPLNotFound:
         raise
     except Exception:
-        if cached is not None:
+        if cached is not None and time.monotonic() - cached[0] < MAX_STALE_SECONDS:
             log.warning("FPL fetch of %s failed; serving cached copy", path, exc_info=True)
             return cached[1], True
         raise
-    if len(_cache) >= _MAX_CACHE_ENTRIES:
-        _cache.pop(min(_cache, key=lambda k: _cache[k][0]))
-    _cache[path] = (time.monotonic(), data)
     return data, False
 
 

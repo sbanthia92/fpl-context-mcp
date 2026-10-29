@@ -145,8 +145,12 @@ schema and validation cannot drift.
 - **Cache:** module-level dict `path → (monotonic fetch time, data)`.
 - **TTLs:** bootstrap 300 s, fixtures 300 s, manager entry/picks/history 120 s, per-player
   history 300 s, finished-gameweek live stats 3600 s, in-progress gameweek 120 s.
-- **Stale fallback:** if a refresh fails and any older copy exists, return it with
-  `is_stale=True`; tools append `STALE_NOTE` so the model can tell the user. A 404 raises
+- **Request coalescing:** concurrent callers that miss the cache share one in-flight fetch per
+  path (`_inflight`), so a cold start or expiry under load costs FPL one request. The fetch is
+  shielded, so one caller being cancelled does not cancel it for the rest.
+- **Stale fallback:** if a refresh fails and a cached copy younger than `MAX_STALE_SECONDS`
+  (6 h) exists, return it with `is_stale=True`; tools append `STALE_NOTE` so the model can tell
+  the user. Older copies are not served and the failure surfaces as an error. A 404 raises
   `FPLNotFound` and is never masked by the cache (an unknown manager ID must not appear valid).
 - **Bound:** 256 entries; on overflow the entry with the oldest fetch time is dropped.
 - **Shared helpers:** `resolve_team` / `find_player` (exact match, then unique substring, else an
@@ -231,8 +235,10 @@ beats failing when FPL has an outage or rate-limits.
 - Per-process: replicas each warm their own cache and do not share it.
 - Data can lag up to the TTL (5 min for bootstrap), which matters around deadlines and price
   changes.
-- No request coalescing: concurrent misses for the same path each fetch (a cold-start herd).
-- A stale copy has no maximum age; it is flagged but can be arbitrarily old.
+- Coalescing is per process; replicas still each fetch once per expiry.
+- Stale data is served for at most 6 h after a failed refresh. After that a tool returns an
+  error, which trades availability during a long FPL outage for never presenting day-old
+  injury or squad data as current.
 - Eviction drops the oldest fetch, not the least recently used.
 **Alternatives rejected.** Redis (adds infrastructure to a zero-config tool; listed as an
 optional future for multi-instance hosting), disk cache (state on disk, permissions, invalidation).
@@ -318,7 +324,7 @@ needs a new version, not a re-run, which is why `tests/test_server_json.py` enfo
 
 | Attribute | How it is addressed | Residual risk |
 |---|---|---|
-| Availability | Stale-cache fallback; `/health`; canary every 15 min | Cold start with FPL down has nothing to serve |
+| Availability | Stale-cache fallback (≤ 6 h); `/health`; canary every 15 min | Cold start, or an outage longer than 6 h, has nothing to serve |
 | Performance | Shared bootstrap cache; thread offload; bounded results | Cache misses cost an FPL round trip (≤ 15 s timeout) |
 | Security | Read-only tools; constant-time token check; non-root container; no secrets in the repo; no DB, so no SQL surface | Open mode relies solely on rate limiting; the limiter keys on the raw `Authorization` header and is in-memory only |
 | Testability | All tests mock `fpl_client._fetch`; no network | Live API schema drift is only caught by the canary |
@@ -340,7 +346,6 @@ needs a new version, not a re-run, which is why `tests/test_server_json.py` enfo
 ## 10. Known gaps and future work
 
 Candidate improvements that follow from the trade-offs above (none committed):
-- Request coalescing and a maximum stale age in `fpl_client`.
 - A shared `requests.Session` (or `httpx.AsyncClient`) for connection reuse.
 - Optional Redis cache and limiter for multi-instance hosting; a `/metrics` endpoint.
 - Moving tool descriptors beside their handlers to slim `server.py`.
