@@ -34,6 +34,7 @@ Plus three prompts (`captain_pick`, `transfer_plan`, `chip_timing`) that show up
 - [Verifying connectivity (--check)](#verifying-connectivity---check)
 - [MCP tools reference](#mcp-tools-reference)
 - [Prompts and resources](#prompts-and-resources)
+- [Architecture](#architecture)
 - [Running tests](#running-tests)
 - [Data sources and disclaimer](#data-sources-and-disclaimer)
 - [License](#license)
@@ -404,6 +405,12 @@ Ready-made workflows. They contain instructions only, no data, so they never go 
 | URI | Contents |
 |---|---|
 | `fpl://glossary` | FPL status codes, FDR, positions, the data limits, and which tool answers what |
+
+---
+
+## Architecture
+
+How the server is built (layers, request flow, caching, transports) and why, including the design decisions and their trade-offs, is in [docs/architecture.md](docs/architecture.md).
 
 ---
 
