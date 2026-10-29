@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- README links to `docs/architecture.md`.
+
 ## [0.11.2] — 2026-10-28
 
 ### Changed
