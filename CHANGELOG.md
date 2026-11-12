@@ -15,7 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - When FPL is unreachable, a cached copy is served only if it is under 6 hours old
   (`MAX_STALE_SECONDS`); older data now returns the "could not reach the FPL API" error instead of
   a possibly days-old answer.
-- Added `docs/architecture.md` (layers, request flow, design decisions and trade-offs).
+- Added `docs/architecture.md` (layers, request flow, design decisions and trade-offs), linked
+  from the README.
 
 ## [0.11.1] — 2026-10-22
 
