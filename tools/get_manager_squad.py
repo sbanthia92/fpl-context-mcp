@@ -93,6 +93,15 @@ async def get_manager_squad(team_id: int, gameweek: int | None = None) -> str:
         )
 
     summary = picks.get("entry_history") or {}
+    event = next((e for e in boot.get("events", []) if e.get("id") == gw), {})
+    status = (
+        "finished"
+        if event.get("finished")
+        else "in progress"
+        if event.get("is_current")
+        else "upcoming"
+    )
+    upcoming = fpl_client.current_gameweek(boot)
     name = f"{entry.get('player_first_name', '')} {entry.get('player_last_name', '')}".strip()
     lines = [
         f"{entry.get('name', 'Team')} (manager: {name or 'unknown'}, id {team_id}) — "
@@ -102,16 +111,19 @@ async def get_manager_squad(team_id: int, gameweek: int | None = None) -> str:
     ]
     if summary:
         lines.append(
-            f"This gameweek: {summary.get('points', '-')} pts, "
-            f"{summary.get('event_transfers', 0)} transfer(s) "
-            f"(-{summary.get('event_transfers_cost', 0)}), "
+            f"GW{gw} ({status}): {summary.get('points', '-')} pts, "
+            f"{summary.get('event_transfers', 0)} transfer(s) made for GW{gw} "
+            f"(-{summary.get('event_transfers_cost', 0)} pts), "
             f"bank £{summary.get('bank', 0) / 10:.1f}m, squad value "
             f"£{summary.get('value', 0) / 10:.1f}m"
         )
+    if status == "finished" and upcoming and upcoming["id"] != gw:
+        lines.append(
+            f"GW{gw} is over, so those transfers and any hit are already spent; "
+            f"the next deadline is GW{upcoming['id']}."
+        )
     active = picks.get("active_chip")
-    lines.append(
-        f"Chip played this gameweek: {_CHIP_NAMES.get(active, active) if active else 'none'}"
-    )
+    lines.append(f"Chip played in GW{gw}: {_CHIP_NAMES.get(active, active) if active else 'none'}")
     used = history.get("chips", [])
     if used:
         played = ", ".join(
@@ -122,7 +134,14 @@ async def get_manager_squad(team_id: int, gameweek: int | None = None) -> str:
     else:
         lines.append("Chips used this season: none")
     lines += ["", fpl_client.format_table(_COLUMNS, rows)]
-    lines += ["", "Slots 1-11 are the starting XI, 12-15 the bench. pts/form/price are current."]
+    lines += [
+        "",
+        (
+            "Slots 1-11 are the starting XI, 12-15 the bench. pts/form are current. price is "
+            "the current market price, not your selling price (FPL's public API does not "
+            "expose it and it can be lower), so budget sums are approximate."
+        ),
+    ]
     if stale_b or stale_e or stale_p or stale_h:
         lines += ["", fpl_client.STALE_NOTE]
     return "\n".join(lines)

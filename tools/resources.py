@@ -13,7 +13,8 @@ GLOSSARY = """\
 FPL glossary
 
 Positions: GKP goalkeeper, DEF defender, MID midfielder, FWD forward.
-Prices are in £m (the API stores tenths: 100 = £10.0m).
+Prices are in £m (the API stores tenths: 100 = £10.0m). They are current market prices:
+a manager's selling price (after FPL's profit rule) is not in the public API and can be lower.
 
 Availability status codes: a available, d doubtful, i injured, s suspended,
 u unavailable (left the club / on loan), n not in squad.

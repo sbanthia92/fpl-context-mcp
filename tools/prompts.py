@@ -61,12 +61,18 @@ def _transfer_plan(args: dict[str, str]) -> str:
         "3. Find my weakest assets: players who are flagged, out of form, on bad runs or "
         "not starting. Use get_live_availability for my squad's names.\n"
         "4. For each position I want to improve, call get_xpts and search_players with "
-        "the position and a max_price equal to the player's sale price plus my bank.\n"
+        "the position and a max_price equal to the player's price plus my bank. Prices "
+        "from get_manager_squad are market prices, not my selling prices, so treat the "
+        "budget as approximate and tell me to confirm it in the FPL app.\n"
         f"5. {_CHECK_AVAILABILITY}\n\n"
         "Recommend one or two concrete transfers (player out, player in, price, why), say "
         "whether a hit is worth it and what it costs, and name a fallback if the first "
-        "choice is flagged before the deadline. Keep the squad legal: 15 players, "
-        "at most 3 from one club, within budget."
+        "choice is flagged before the deadline. Each player in must play the same position "
+        "as the player out (GKP, DEF, MID or FWD): state both positions, taken from the "
+        "tool output, not from memory. Keep the squad legal: 15 players, at most 3 from one "
+        "club, within budget. Quote fixtures (opponent and home/away), prices and hit costs "
+        "exactly as the tools report them, and do not count transfers made in an earlier "
+        "gameweek against the next deadline."
     )
 
 
