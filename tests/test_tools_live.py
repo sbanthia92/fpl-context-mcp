@@ -340,11 +340,15 @@ async def test_search_limit_notice():
 async def test_manager_squad_summary():
     out = await get_manager_squad(7)
     assert "Test XI" in out and "gameweek 2 squad" in out
-    assert "Chip played this gameweek: Bench Boost" in out
+    assert "Chip played in GW2: Bench Boost" in out
     assert "Chips used this season: Wildcard (GW1)" in out
     assert "squad value £100.5m" in out
     assert "captain" in out and "vice" in out
-    assert "(-4)" in out
+    assert "(-4 pts)" in out
+    # GW2 is finished in the fixture data: say so, and point at the next deadline
+    assert "GW2 (finished)" in out and "1 transfer(s) made for GW2" in out
+    assert "GW2 is over" in out and "next deadline is GW3" in out
+    assert "market price, not your selling price" in out
 
 
 async def test_manager_unknown_id():

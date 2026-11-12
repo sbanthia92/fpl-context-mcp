@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.3] — 2026-11-12
+
+### Fixed
+
+- `get_manager_squad` labelled the manager's latest gameweek "This gameweek" even when it had
+  finished, so a past gameweek's transfers and hit were reported as if they applied to the
+  coming deadline. The summary now reads "GW10 (finished): … 3 transfer(s) made for GW10 (-8 pts)"
+  and says when that gameweek is over and which deadline is next. The chip line names its
+  gameweek too.
+
+### Changed
+
+- `get_manager_squad` and the `fpl://glossary` resource say that prices are current market
+  prices, not the manager's selling price (not in FPL's public API, and it can be lower), so
+  budget sums are approximate.
+- The `transfer_plan` prompt now requires each player in to match the position of the player
+  out (taken from tool output), tells the model to treat budget as approximate, to quote
+  fixtures, prices and hit costs as the tools report them, and not to count earlier-gameweek
+  transfers against the next deadline.
+
 ## [0.11.2] — 2026-10-28
 
 ### Changed

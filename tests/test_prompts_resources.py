@@ -65,3 +65,10 @@ async def test_server_exposes_prompts_and_resources():
     assert uris == {GLOSSARY_URI}
     contents = await server.read_resource(GLOSSARY_URI)
     assert "FDR" in contents[0].content
+
+
+def test_transfer_plan_requires_same_position_and_flags_market_prices():
+    text = _text(get_prompt("transfer_plan", {}))
+    assert "same position" in text
+    assert "market prices" in text
+    assert "earlier gameweek" in text
